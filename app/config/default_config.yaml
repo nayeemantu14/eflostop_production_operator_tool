@@ -1,0 +1,46 @@
+# eFloStop II Production Tool — Default Configuration
+
+general:
+  company_name: "eFloStop"
+  tool_version: "1.0.0"
+  data_dir: "data"            # Relative to app root; holds SQLite + JSONL records
+
+firmware:
+  manifest_path: "firmware/manifest.yaml"
+
+flash:
+  esp_baud: 460800
+  stm32_programmer_cli: "C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin\\STM32_Programmer_CLI.exe"
+
+serial_number:
+  prefix_by_device:
+    hub: "EFS2H"
+    valve: "EFS2V"
+    sensor: "EFS2S"
+
+ble_scan:
+  timeout_seconds: 15
+  hub_name_prefix: "eFloStop"
+  valve_name_prefix: "eFloStop"
+  sensor_name_prefix: "eleak"
+
+label_printer:
+  enabled: false
+  connection: "usb"           # "usb" or "tcp"
+  tcp_host: ""
+  tcp_port: 9100
+  label_width_mm: 50
+  label_height_mm: 25
+  qr_size_mm: 25
+
+test:
+  boot_log_timeout_seconds: 15
+  battery_voltage_min: 2.5
+  battery_voltage_max: 3.3
+
+skus:
+  hub: "EFS2-HUB-NA"
+  valve: "EFS2-VLV-1IN"
+  sensor: "EFS2-LKS-BLE"
+
+hw_revision: "C"

@@ -1,0 +1,43 @@
+# eFloStop II Firmware Manifest
+# Place firmware binaries in the respective subdirectories.
+# Update this file when firmware versions change.
+
+wifi_hub:
+  version: "1.0.0"
+  flash_size: "detect"
+  files:
+    bootloader: "wifi_hub/bootloader.bin"
+    partition_table: "wifi_hub/partition-table.bin"
+    ota_data: "wifi_hub/ota_data_initial.bin"
+    application: "wifi_hub/eflostop2_hub.bin"
+  # Offsets MUST match the firmware build's partition table (build/flasher_args.json).
+  # The idf1 build uses a custom layout: factory app at 0x20000, otadata at 0x11000.
+  flash_offsets:
+    bootloader: 0x0000
+    partition_table: 0x8000
+    ota_data: 0x11000
+    application: 0x20000
+
+valve:
+  version: "1.0.0"
+  mcu_dev_id: 0x495
+  mcu_id_address: 0xE0042000
+  uid_address: 0x1FFF7590
+  files:
+    fus_firmware: "valve/stm32wb5x_FUS_fw.bin"
+    ble_stack: "valve/stm32wb5x_BLE_Stack_full_fw.bin"
+    application_debug: "valve/eflostop2_valve_debug.bin"
+    application: "valve/eflostop2_valve.bin"
+  flash_addresses:
+    fus_firmware: 0x080EC000
+    ble_stack: 0x080C7000
+  fus_min_version: "1.2.0"
+
+leak_sensor:
+  version: "0.1.0"
+  mcu_dev_id: 0x492
+  mcu_id_address: 0xE0044000
+  uid_address: 0x0BF90700
+  files:
+    application_debug: "leak_sensor/eflostop2_leak_sensor_debug.bin"
+    application: "leak_sensor/eflostop2_leak_sensor_release.bin"

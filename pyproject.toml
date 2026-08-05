@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eflostop-production-tool"
+version = "1.0.0"
+description = "eFloStop II Production Programming & Test Tool"
+requires-python = ">=3.11"
+dependencies = [
+    "PyQt6>=6.6",
+    "pyserial>=3.5",
+    "esptool>=4.7",
+    "bleak>=0.22",
+    "qrcode[pil]>=7.4",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+eflostop-tool = "main:main"
