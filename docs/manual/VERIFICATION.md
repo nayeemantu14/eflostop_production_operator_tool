@@ -13,7 +13,7 @@ Manifest: `docs/manual/screenshot_manifest.md`
 | 3 | Flows A, B, C each a complete, numbered, operator-level procedure | **PASS** — Program/Test/QR are numbered step-by-step in Ch. 5 (Hub), 6 (Valve), 7 (Sensor); QR/app-linking consolidated in Ch. 8. |
 | 4 | Every step references a real UI label (spot-check cited) | **PASS** — see the spot-check table below. |
 | 5 | Every figure has a numbered caption + embedded image or a manifest-backed placeholder | **PASS** — 27 numbered figure captions; 26 embedded images (Fig 4 & 9 share the identical Hub-READY capture, deduped by python-docx); 6 placeholders, each listed in the manifest + Appendix B; **no inline figure reference lacks a caption**. |
-| 6 | No feature/threshold/label/QR format without a code basis; hub QR accurate | **PASS** — content derived from the citation-backed discovery; only the live plain-text query-string QR is documented; the stale base64/JSON + ZPL/25 mm paths and the title-bar version are explicitly excluded (Appendix B.3). |
+| 6 | No feature/threshold/label/QR format without a code basis; hub QR accurate | **PASS** — content derived from the citation-backed discovery; only the live plain-text query-string QR is documented; the stale base64/JSON QR spec and the title-bar version are explicitly excluded (Appendix B.3). |
 | 7 | Revision table on the cover page | **PASS** — document-control table + revision-history table on the cover. |
 
 ## Validation commands run
@@ -47,14 +47,14 @@ Manifest: `docs/manual/screenshot_manifest.md`
 | QR payload `id=<id>&type=<type>&hw=<hw>&sw=v<fw>` | app/services/qr_generator.py:47-59 |
 | Prefixes GW- / VV- / LK- | app/services/qr_generator.py:18-22 |
 | Serial prefixes EFS2H / EFS2V / EFS2S | app/config/settings.py:63-67 |
-| 40 mm QR print via Print Label / Printer Setup | app/ui/widgets/qr_preview.py:101-118,141-200 |
+| 20 mm QR-only print via Printer dropdown / Print Label / Printer Setup | app/ui/widgets/qr_preview.py (QR panel + backend dispatch); app/services/printing/geometry.py (20 mm spec + guards) |
 | History 10 columns + Export CSV | app/ui/tab_history.py:79-82; app/services/record_logger.py:70-93 |
 | Hub does NOT re-flash; Valve/Sensor re-flash production | app/ui/tab_wifi_hub.py (no `_flash_production`) vs app/ui/tab_valve.py:508-569; app/ui/tab_leak_sensor.py:399-468 |
 
 ## Placeholders remaining (6) — replace before release
 
 Fig 3b (red firmware strip), Fig 10/14/19 (Hub/Valve wiring + coin-cell photos),
-Fig 24 (printed 40 mm label photo), Fig 26 (Windows Printer Setup dialog). Each has a
+Fig 24 (printed 20 mm label photo), Fig 26 (Printer Setup dialog). Each has a
 reproduction recipe in **Appendix B.3**.
 
 ## Notes

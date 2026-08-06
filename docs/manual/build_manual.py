@@ -311,9 +311,12 @@ figure(1, "The main window: operator bar (top), firmware status strip, and the f
 step(3, "Confirm the firmware strip shows every device in **green**. A red tag means "
         "firmware is missing — see Section 8.1.")
 h2("2.6  One-time printer setup")
-para("Set up the label printer once per session using the **Printer Setup** button on "
-     "any device tab (see Section 5.7). The chosen printer is remembered for the rest of "
-     "the session.")
+para("The QR panel on every device tab has a **Printer** dropdown. Choose the label "
+     "printer there once — the setting is shared by all three tabs and is remembered "
+     "between sessions, so this is normally a one-off per PC. Then press **Printer "
+     "Setup** to configure that printer (see Section 8.1).")
+callout("NOTE", "If an entry reads \"— not detected\" or \"— no printer chosen\", that "
+        "printer is not ready. Pick another, or press Printer Setup to configure it.")
 page_break()
 
 # ===========================================================================
@@ -448,8 +451,9 @@ step(9, "On PASS the banner turns green and a QR code appears on the right with 
         "showing **SN**, **ID**, **WiFi** SSID, and **FW**.")
 figure(12, "A WiFi Hub PASS with its generated QR label.")
 qr_note("GW")
-step(10, "Press **Print Label** to print. The first time, press **Printer Setup** and "
-         "choose the label printer (Section 5.7).")
+step(10, "Press **Print Label** to print the 20 mm QR label. The first time on this "
+         "PC, pick the printer in the **Printer** dropdown and press **Printer "
+         "Setup** (Section 8.1).")
 para("The Hub's serial number begins **EFS2H**. Apply the printed label to the unit. The "
      "app links the Hub by scanning this QR.")
 h2("5.6  If the Hub fails")
@@ -568,14 +572,32 @@ para("Every device's QR encodes the same kind of plain-text string. The phone / 
      "**id=** prefix: **GW-** = WiFi Hub, **VV-** = Valve, **LK-** = Leak Sensor.")
 figure(27, "Anatomy of the QR payload string.", max_w=6.3)
 para("The QR panel shows **No QR generated** until a unit passes; after PASS it shows the "
-     "code with **Print Label** and **Printer Setup** buttons.")
-figure(25, "The QR panel after a PASS (Print Label / Printer Setup).", max_w=3.4)
+     "code with a **Printer** dropdown and the **Print Label** and **Printer Setup** "
+     "buttons.")
+figure(25, "The QR panel after a PASS (Printer dropdown, Print Label, Printer Setup).",
+       max_w=3.4)
 h2("8.1  Printing")
-para("Press **Printer Setup** once to choose the label printer (Figure 26); it is "
-     "remembered for the session. Then **Print Label** prints a 40 mm QR with the "
-     "human-readable SN / ID / FW beside it (Figure 24).")
-figure(26, "The Windows Printer Setup dialog.", max_w=3.6)
-figure(24, "A printed 40 mm QR label.", max_w=4.5)
+para("Pick the label printer in the **Printer** dropdown. The choice is shared by all "
+     "three device tabs and is remembered between sessions. Then press **Printer Setup** "
+     "to configure that printer — for a normal Windows printer this is the standard "
+     "Windows print dialog (Figure 26); a dedicated label printer shows its own settings "
+     "instead.")
+para("**Print Label** then prints a **20 mm x 20 mm** label carrying the QR code only "
+     "(Figure 24). There is no readable text on the label — at 20 mm there is no room "
+     "for any, and the on-screen caption is where the operator reads the SN and ID.")
+figure(26, "The Printer Setup dialog for the selected printer.", max_w=3.6)
+figure(24, "A printed 20 mm QR label.", max_w=4.5)
+h2("8.2  Print warnings")
+para("The tool checks the label size before every print and shows **at most one** of "
+     "these. Both default to **No** — answering No cancels the print and changes nothing.")
+bullet("**Label size is not 20 mm** — the printer's page is not the 20 mm label stock. "
+       "Load 20 mm labels or select the right media in Printer Setup.")
+bullet("**QR would print under 20 mm** — the printer cannot mark all the way to the edge, "
+       "so the QR would come out smaller than 20 mm and may not scan. The message names "
+       "the exact size it would print at. Use a full-bleed label printer.")
+para("**Print Error — the printer reported no printable area** cannot be overridden: the "
+     "print is cancelled. **Print Error — could not start printing** means the printer "
+     "was not reachable; check it is powered on and connected.")
 page_break()
 
 # ===========================================================================
@@ -738,18 +760,18 @@ PLACE = [
     ("10 — Hub wiring", "Photo of the CP2102 USB-UART adapter connected to the ESP32-S3 Hub (TX/RX/GND/5V + USB to PC)."),
     ("14 — Valve wiring", "Photo of the ST-Link on the Valve SWD header, one programmer only."),
     ("19 — Coin cell", "Photo of the coin cell installed with correct polarity in the Leak Sensor."),
-    ("24 — Printed label", "Photo of the printed 40 mm QR label (SN / ID / FW text beside the code)."),
-    ("26 — Printer Setup", "Screenshot of the Windows print dialog opened by Printer Setup on the capture PC."),
+    ("24 — Printed label", "Photo of the printed 20 mm x 20 mm QR-only label, next to a ruler for scale."),
+    ("26 — Printer Setup", "Screenshot of the dialog opened by Printer Setup for the selected printer (the Windows print dialog for \"System printer (any)\")."),
 ]
 for fg, how in PLACE:
     r = bt.add_row().cells
     r[0].paragraphs[0].add_run(fg)
     r[1].paragraphs[0].add_run(how)
 para("")
-callout("NOTE", "Ignore the tool's unused/stale paths when documenting: the base64/JSON QR "
-        "spec, the ZPL 25 mm label path, and the title-bar version number are not the live "
-        "behaviour. The real QR is the plain-text query string and the real print path is "
-        "the 40 mm QR label.")
+callout("NOTE", "Ignore the tool's stale docs when documenting: the base64/JSON QR spec in "
+        "docs/QR_PAYLOAD_SPEC.md is not the live behaviour. The real QR is the plain-text "
+        "query string and the real print path is the 20 mm QR-only label, produced by the "
+        "printer backend selected in the QR panel (see docs/PRINTER_BACKENDS.md).")
 
 # ===========================================================================
 # HEADER / FOOTER + update-fields-on-open

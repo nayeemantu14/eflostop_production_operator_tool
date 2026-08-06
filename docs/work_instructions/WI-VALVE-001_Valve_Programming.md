@@ -240,10 +240,12 @@ Each passing board gets one **20 mm × 20 mm** QR label.
 
 **Step 6.2** — **Record the `SN:` and `ID:` values in the batch log (§8) against this board number _before_ printing.**
 
-**Step 6.3 (first board only)** — Click **Printer Setup** and select the printer. The setting is remembered for the rest of the session.
+**Step 6.3 (first board only)** — In the QR panel, set the **Printer** dropdown to `System printer (any)` for this trial, then click **Printer Setup** and select the office printer. Both settings are remembered — the dropdown choice persists between sessions, and the printer choice for the rest of this session.
+
+> The **Printer** dropdown selects which kind of label printer the tool drives. It is shared across all three device tabs, so setting it here also sets it for WiFi Hub and Leak Sensor. If an entry shows `— not detected`, that printer is not connected.
 
 ![Fig 13 — Printer Setup dialog](screenshots/fig-13-printer-setup.png)
-*Figure 13 — Printer Setup.*
+*Figure 13 — Printer dropdown and Printer Setup.*
 
 **Step 6.4** — Click **Print Label**, then follow §6.6 below for this trial (office printer).
 

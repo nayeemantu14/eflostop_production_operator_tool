@@ -46,7 +46,14 @@ C:\Work\Projects\EfloStop 2\Production tool\
 │   │   ├── stlink_detector.py      # ST-Link probe enumeration
 │   │   ├── firmware_registry.py    # manifest.yaml loader
 │   │   ├── qr_generator.py         # QR code generation
-│   │   ├── label_printer.py        # Zebra ZPL label printing
+│   │   ├── printing/               # Pluggable label-printer backends
+│   │   │   ├── base.py             #   backend contract
+│   │   │   ├── geometry.py         #   20 mm spec + print guards (pure, no Qt)
+│   │   │   ├── qt_geometry.py      #   QPrinter adapter
+│   │   │   ├── qt_driver.py        #   base for driver-based printers
+│   │   │   ├── registry.py         #   backend registration
+│   │   │   ├── selection.py        #   which backend, persisted per user
+│   │   │   └── backends/           #   system / puqu_aq20 / zpl_tcp
 │   │   ├── record_logger.py        # JSONL + SQLite logging
 │   │   ├── serial_generator.py     # YYWW-NNNNNN serial numbers
 │   │   └── cloud_preprovision.py   # Azure provisioning stub

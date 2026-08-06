@@ -37,11 +37,11 @@ fabricated or AI-generated; no depicted UI element is absent from the code.
 | 21 | 7 | fig21_sensor_leak.png | Leak-probe "Operator Check" dialog | tab_leak_sensor.py:384-394 | auto |
 | 22 | 7 | fig22_sensor_pass.png | Leak Sensor PASS + populated QR | tab_leak_sensor.py:399-468 | mock |
 | 23 | 8 | fig23_fail_example.png | FAIL banner + "FAIL:" log line | tab_wifi_hub.py:392-408 | mock |
-| 24 | 5.7/6.7/7.7 | fig24_printed_label.png | Printed 40 mm QR label (photo) | qr_preview.py:141-200 | PLACEHOLDER (photo) |
-| 25 | 4.4/5.6 | fig25_qr_panel.png | Populated QR panel (Print/Setup buttons) | qr_preview.py:47,101-118 | mock |
-| 25b| 4.4 | fig25b_qr_idle.png | Idle "No QR generated" panel | qr_preview.py:47 | auto |
-| 26 | 2.8 | fig26_printer_setup.png | Windows Printer Setup dialog (OS) | qr_preview.py:113-118 | PLACEHOLDER (OS) |
+| 24 | 8.1 | fig24_printed_label.png | Printed 20 mm x 20 mm QR-only label (photo, with ruler) | printing/geometry.py (20 mm spec); printing/qt_geometry.py (draw) | PLACEHOLDER (photo) |
+| 25 | 4.4/8 | fig25_qr_panel.png | Populated QR panel (Printer dropdown + Print/Setup buttons) | qr_preview.py (QrPreview panel); ui/widgets/printer_selector.py | mock |
+| 25b| 4.4 | fig25b_qr_idle.png | Idle "No QR generated" panel (dropdown visible, buttons hidden) | qr_preview.py (QrPreview.clear) | auto |
+| 26 | 2.6/8.1 | fig26_printer_setup.png | Printer Setup dialog for the selected backend (Windows print dialog for "System printer (any)") | printing/backends/system.py (configure) | PLACEHOLDER (OS) |
 | 27 | 5.6/6.7/7.7 | fig27_qr_anatomy.png | QR payload field-anatomy diagram | qr_generator.py:47-59; DEVICE_QR_PREFIX:18-22 | authored |
 | 28 | 9 | fig28_history.png | History tab, populated + filters/stats | record_logger.py:70-93; tab_history.py | mock |
 
-**Placeholders to replace before release (6):** Fig 3b (red strip), Fig 10/14/19 (wiring & coin-cell photos), Fig 24 (printed label photo), Fig 26 (OS Printer Setup dialog). Recipes for each are in **Appendix B — Screenshot & Figure Capture Guide**.
+**Placeholders to replace before release (6):** Fig 3b (red strip), Fig 10/14/19 (wiring & coin-cell photos), Fig 24 (printed 20 mm label photo), Fig 26 (Printer Setup dialog). Recipes for each are in **Appendix B — Screenshot & Figure Capture Guide**.

@@ -347,13 +347,14 @@ make_placeholder("fig19_coincell.png", 900, 560,
                  "Photo: coin cell inserted with correct + / - orientation into the Leak Sensor; "
                  "SAFETY - do not short the cell, observe polarity.")
 make_placeholder("fig24_printed_label.png", 900, 460,
-                 "Printed QR label (40 mm)",
-                 "Photo of the printed label: 40 mm QR at a 10 mm left margin with monospace "
-                 "SN / ID / FW text (plus WiFi SSID for the Hub) to the right.")
+                 "Printed QR label (20 mm x 20 mm)",
+                 "Photo of the printed label beside a ruler for scale: a 20 mm x 20 mm "
+                 "QR-only label. There is no readable text - at 20 mm there is no room.")
 make_placeholder("fig26_printer_setup.png", 820, 560,
-                 "Printer Setup (Windows print dialog)",
-                 "Screenshot on the capture host: the Windows QPrintDialog opened by the "
-                 "'Printer Setup' button; select the label printer here (persists for the session).")
+                 "Printer Setup (selected printer backend)",
+                 "Screenshot on the capture host: the dialog opened by 'Printer Setup' for "
+                 "whichever printer is chosen in the Printer dropdown - the Windows "
+                 "QPrintDialog for 'System printer (any)'.")
 
 # ---------------------------------------------------------------------------
 print("CAPTURE SUMMARY ({} figures):".format(len(results)))

@@ -53,9 +53,35 @@ firmware/
 Edit `app/config/default_config.yaml` to configure:
 - STM32CubeProgrammer CLI path
 - BLE scan parameters
-- Label printer settings
+- Default label printer backend and its factory defaults (`label_printer`)
 - Battery voltage thresholds
 - SKU identifiers
+
+### Label printing
+
+The printed label is fixed at **20 mm × 20 mm, QR only** — that is a manufacturing spec, not a
+setting. What *is* configurable is which printer it goes to. The operator picks one from the
+**Printer** dropdown in the QR panel on any device tab; the choice is shared by all three tabs and
+remembered per user across restarts and upgrades.
+
+```yaml
+label_printer:
+  backend: "system"           # "system" | "puqu_aq20" | "zpl_tcp"
+  backends:                   # factory defaults; each backend validates its own keys
+    puqu_aq20:
+      printer_name: ""        # exact Windows queue name; blank = choose in Printer Setup
+      resolution_dpi: 203
+    zpl_tcp:
+      host: ""
+      port: 9100
+```
+
+`backend` names the default; an id that isn't installed falls back to `system` rather than failing.
+These are factory defaults only — an operator's own selection and per-machine settings live in
+per-user settings, so they survive a tool upgrade.
+
+To add support for a different printer, see **[docs/PRINTER_BACKENDS.md](docs/PRINTER_BACKENDS.md)** —
+it is one new module plus one import line.
 
 ## Building Installer
 
