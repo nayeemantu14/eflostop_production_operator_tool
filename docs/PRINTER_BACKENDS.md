@@ -338,6 +338,7 @@ over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
 |---|---|---|
 | COM Port | — | The port the printer enumerates as. USB and Bluetooth both appear here. |
 | Baud rate | 115200 | Ignored by a USB virtual COM port; may matter over Bluetooth. |
+| Timeout | 1.5 s | Worst case is about twice this plus a second. Kept under the ~5 s at which Windows paints a window "Not Responding". Raise it if a Bluetooth link needs longer to come up. |
 | Label width / height | 20 mm | The stock you loaded. The tool cannot read this from the printer. |
 | Gap between labels | 2 mm | Vertical gap for the printer's gap sensor. 0 = continuous stock. |
 | Density | 8 | TSPL print darkness, 0 (lightest) to 15 (darkest). |
@@ -347,9 +348,12 @@ over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
 ### 4.3 If it does not print
 
 - *"no COM port chosen"* / *"COMn not connected"* — the port is not there. Refresh the list in Setup.
-- *"did not respond within N s"* — the port exists but nothing answered in time. Usually the wrong
-  port (some other device), or a Bluetooth link that did not come up. The tool gives up rather than
-  freezing.
+- *"did not respond within N s"* — the port exists but nothing opened in time. Usually the wrong port
+  (some other device), or a Bluetooth link that did not come up. **The label was not printed** — the
+  tool disowns a job it has given up on, so it cannot surface later and print the wrong serial.
+- *"A previous label is still being sent to COMn and has not finished"* — a stuck port from an earlier
+  attempt. Only one job runs at a time, so this refuses immediately rather than queueing. If the
+  printer is genuinely wedged, restart the tool.
 - *"Access is denied"* — another program holds the port. Close the vendor app or any terminal.
 
 ### 4.4 Known gaps — needs bench verification
@@ -357,11 +361,23 @@ over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
 - **That the AQ20 speaks TSPL at all** rests on hands-on testing, not on anything PUQU publishes.
 - **Bitmap polarity.** TSPL prints a dot where the bit is `0` — the inverse of ZPL. That is the
   convention this backend implements. If the first label comes out as a negative (solid black with a
-  white QR), tick **Invert bitmap** in Setup; no code change is needed.
+  white QR), tick **Invert bitmap** in Setup; no code change is needed. Inverting also flips the row
+  padding, so it will not leave a black stripe down the edge.
 - **20 × 20 mm gap stock.** PUQU publishes no minimum label height, so whether the gap sensor can
   index a 20 mm label is still unproven.
 
-### 4.5 The TSPL job
+### 4.5 Why a print can take a couple of seconds
+
+The serial write runs on a daemon thread with a hard deadline, and the GUI waits on it. Two things
+that look like over-engineering are not:
+
+- pyserial's `timeout`/`write_timeout` do **not** cover `open()`, and opening a Bluetooth COM port can
+  block for seconds while Windows brings the link up. Only an outer deadline bounds that.
+- A job the tool has given up waiting on is **disowned**: if its port ever does open, it checks a
+  generation counter and discards the label. Without that, a slow-but-eventually-successful open
+  printed a label after the operator had been told it failed and moved to the next device.
+
+### 4.6 The TSPL job
 
 One label is sent as, in order: `SIZE`, `GAP`, `DIRECTION 0,0`, `REFERENCE 0,0`, `DENSITY`, `SPEED`,
 `CLS`, `BITMAP`, `PRINT 1,1` — each CRLF-terminated, per TSC's TSPL/TSPL2 manual. Every state-bearing
