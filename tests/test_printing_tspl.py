@@ -154,8 +154,7 @@ def test_bitmap_header_declares_bytes_and_dots():
     (x, y, width_bytes, height, mode), _data = parse_bitmap(build_job())
     assert width_bytes == 20  # 160 dots / 8
     assert height == 160  # dots
-    assert x % 8 == 0  # byte-aligned column
-    assert y >= 0
+    assert (x, y) == (0, 0)  # a 20 mm QR fills a 20 mm label
     assert mode == 0  # OVERWRITE
 
 
@@ -228,7 +227,6 @@ def test_availability_is_checked_before_the_guards():
     [
         {"density": 16}, {"density": -1},
         {"speed": 0}, {"speed": 99},
-        {"dpi": 0}, {"dpi": 99999},
         {"baudrate": 1}, {"gap_mm": -1}, {"gap_mm": 100},
         {"label_width_mm": 0}, {"label_height_mm": 500},
         {"timeout_seconds": 0}, {"timeout_seconds": 120},
@@ -241,7 +239,9 @@ def test_out_of_range_options_are_rejected(kwargs):
 
 def test_defaults_match_the_aq20_and_the_label_spec():
     o = TsplSerialOptions()
-    assert o.dpi == 203  # AQ20 print head
+    # dpi is a backend class constant, not an option — see the review
+    # regression test for why.
+    assert PuquAq20SerialBackend.dpi == 203  # AQ20 print head
     assert o.label_width_mm == 20 and o.label_height_mm == 20
     assert o.density == 8  # TSPL manual default
     assert o.invert is False

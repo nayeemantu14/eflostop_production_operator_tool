@@ -11,6 +11,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -265,6 +266,12 @@ class QrPreview(QWidget):
             )
             return
 
+        # Printing can take a couple of seconds on a slow or absent printer, and
+        # a click during that window would stack a second job behind the first —
+        # which for a direct-to-port backend means a second physical label. The
+        # button is disabled and the cursor turns busy for the duration.
+        self.print_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             request = LabelPrintRequest(
                 image=self._qr_image, ui=self._guard_ui, parent=self
@@ -275,6 +282,9 @@ class QrPreview(QWidget):
                 self, "Print Error", f"Printing failed unexpectedly: {exc}"
             )
             return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.print_btn.setEnabled(True)
 
         # An operator must never click Print and get silence. CANCELLED is the
         # one quiet case: they just answered No to a guard dialog.

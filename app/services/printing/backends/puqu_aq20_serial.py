@@ -25,8 +25,8 @@ that 20 x 20 mm gap stock feeds and calibrates, and a scan test of the result.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, ClassVar
 
 import serial
@@ -90,10 +90,13 @@ class TsplSerialOptions(BaseModel):
     label_height_mm: float = float(QR_LABEL_SIZE_MM)
     # Vertical gap between die-cut labels, for the printer's gap sensor.
     gap_mm: float = 2.0
-    dpi: int = 203
     density: int = 8  # TSPL DENSITY, 0-15, manual default 8
     speed: int = 3  # TSPL SPEED, inches/sec
-    timeout_seconds: float = 3.0
+    # Default kept under the ~5 s at which Windows paints a window "Not
+    # Responding": the print waits up to 2x this plus a second. A Bluetooth link
+    # that needs longer to come up can raise it in config, at the cost of a
+    # longer pause when the printer is absent.
+    timeout_seconds: float = 1.5
     # Escape hatch for the one thing that cannot be confirmed without hardware.
     # See pack_tspl_bitmap(). If the first label prints as a photographic
     # negative, flip this instead of editing code.
@@ -104,13 +107,6 @@ class TsplSerialOptions(BaseModel):
     def _valid_baud(cls, value: int) -> int:
         if not 1200 <= value <= 1000000:
             raise ValueError("baudrate must be between 1200 and 1000000")
-        return value
-
-    @field_validator("dpi")
-    @classmethod
-    def _valid_dpi(cls, value: int) -> int:
-        if not 72 <= value <= 2400:
-            raise ValueError("dpi must be between 72 and 2400")
         return value
 
     @field_validator("density")
@@ -172,16 +168,23 @@ def pack_tspl_bitmap(image: QImage, invert: bool = False) -> tuple[bytes, int, i
     width = image.width()
     height = image.height()
     width_bytes = -(-width // 8)  # ceiling division
+    # The bit value that means "leave the paper blank" — normally 1, but 0 when
+    # the operator has inverted the output. Seeding each row with it is what
+    # keeps the stride padding past the right-hand edge unprinted. Hardcoding
+    # 0xFF here burned a black stripe down the edge of every inverted label,
+    # straight through the QR's quiet zone.
+    blank = 0x00 if invert else 0xFF
     out = bytearray()
 
     for y in range(height):
-        # Start with every bit set: 1 = leave blank, so padding bits past the
-        # right-hand edge of the image stay unprinted.
-        row = bytearray(b"\xff" * width_bytes)
+        row = bytearray([blank]) * width_bytes
         for x in range(width):
-            dark = image.pixelColor(x, y).value() < 128
-            if dark != invert:  # dark, unless the operator inverted the output
-                row[x >> 3] &= ~(0x80 >> (x & 7)) & 0xFF  # clear bit -> burn dot
+            if image.pixelColor(x, y).value() < 128:  # dark pixel -> burn a dot
+                mask = 0x80 >> (x & 7)
+                if invert:
+                    row[x >> 3] |= mask
+                else:
+                    row[x >> 3] &= ~mask & 0xFF
         out += row
 
     return bytes(out), width_bytes, height
@@ -196,11 +199,23 @@ class PuquAq20SerialBackend:
     capabilities: ClassVar[BackendCapabilities] = BackendCapabilities(configurable=True)
     sort_order: ClassVar[int] = 15  # directly under the driver-based AQ20 entry
 
+    # The print head's real resolution. Not an operator setting: TSPL SIZE is in
+    # millimetres and the printer maps that to its own dots, so a configured DPI
+    # that disagreed with the hardware would rasterise the wrong number of dots
+    # with nothing able to detect it. A subclass for another TSPL printer
+    # overrides this.
+    dpi: ClassVar[int] = 203
+
     def __init__(self, options: Mapping[str, Any] | None = None) -> None:
         self._opts = TsplSerialOptions()
         self._availability = Availability(False, "no COM port chosen")
-        # One worker, so two prints can never interleave on the same port.
-        self._io = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tspl")
+        # In-flight bookkeeping. Serial writes run on a daemon thread so a wedged
+        # port can never keep the process alive, and only one may be outstanding
+        # at a time — see _run_bounded().
+        self._lock = threading.Lock()
+        self._busy_port: str | None = None
+        self._generation = 0
+        self._abandoned_through = 0
         self.apply_options(options or {})
 
     # --- options ------------------------------------------------------------
@@ -250,7 +265,7 @@ class PuquAq20SerialBackend:
         run_guards use wording that blames the configuration rather than
         pretending a printer reported a hardware margin.
         """
-        dpi = self._opts.dpi
+        dpi = self.dpi
         return PrinterMetrics(
             # mm_to_px, not a raw float division: the shared geometry rounds the
             # same way, and a page that disagrees with it by a fraction of a dot
@@ -277,10 +292,13 @@ class PuquAq20SerialBackend:
         mono = qt_geometry.rasterize(image, side)
         data, width_bytes, height_dots = pack_tspl_bitmap(mono, invert=o.invert)
 
+        # Both BITMAP coordinates are in dots. Only `width` is in bytes — an
+        # earlier version snapped X down to a byte boundary, which shifted the
+        # QR up to 7 dots (0.88 mm) off-centre on any label whose width is not a
+        # multiple of 8 dots, and put this backend's output out of step with
+        # the ZPL one for the same LabelPlan.
         x, y, _, _ = plan.qr_rect
-        # BITMAP's X is in dots but addresses a byte-aligned column, so snap the
-        # offset to a byte boundary rather than letting the printer round it.
-        x_dots = max(0, round(x) // 8 * 8)
+        x_dots = max(0, round(x))
         y_dots = max(0, round(y))
 
         header = EOL.join([
@@ -301,17 +319,103 @@ class PuquAq20SerialBackend:
 
     # --- printing -----------------------------------------------------------
 
-    def _write(self, payload: bytes) -> None:
-        """Open the port, write the job, close. Runs on the worker thread."""
-        o = self._opts
+    def _write(self, generation: int, opts: TsplSerialOptions, payload: bytes) -> None:
+        """Open the port, write the job, close. Runs on the worker thread.
+
+        Takes its settings by value rather than reading ``self._opts``: the
+        operator can change the port in Printer Setup while a slow open is still
+        in progress, and a worker that re-read the current options would send a
+        job built for one printer to a different one.
+
+        The generation check between open and write is the important part. If
+        the caller has already given up and told the operator the print failed,
+        this job must NOT go on to print — otherwise a label bearing one device's
+        serial falls out while the operator is holding the next device.
+        """
         with serial.Serial(
-            port=o.port,
-            baudrate=o.baudrate,
-            timeout=o.timeout_seconds,
-            write_timeout=o.timeout_seconds,
+            port=opts.port,
+            baudrate=opts.baudrate,
+            timeout=opts.timeout_seconds,
+            write_timeout=opts.timeout_seconds,
         ) as port:
+            if self._is_abandoned(generation):
+                log.warning(
+                    "discarding label job for %s: the operator was already told "
+                    "it failed", opts.port,
+                )
+                return
             port.write(payload)
-            port.flush()
+            # No flush(): pyserial's Windows flush() is an unbounded
+            # `while out_waiting: sleep(0.05)` with no timeout, and closing the
+            # port drains it anyway.
+
+    def _is_abandoned(self, generation: int) -> bool:
+        with self._lock:
+            return generation <= self._abandoned_through
+
+    def _run_bounded(self, opts: TsplSerialOptions, payload: bytes) -> str:
+        """Do the serial write off the GUI thread. Returns "" or an error.
+
+        A daemon thread rather than a pooled worker: a wedged serial open must
+        not keep the process alive. ``concurrent.futures`` workers are
+        non-daemon and joined by an atexit hook, so a stuck open left the
+        windowed .exe running with no window after the operator closed it.
+
+        Only one job may be outstanding. A second print while one is stuck is
+        refused immediately and names the port that is actually stuck, instead
+        of queueing behind it and then blaming whichever port is configured by
+        the time it times out.
+        """
+        with self._lock:
+            if self._busy_port is not None:
+                return (
+                    f"A previous label is still being sent to {self._busy_port} "
+                    f"and has not finished. Wait a moment, or restart the tool if "
+                    f"the printer is not responding."
+                )
+            self._generation += 1
+            generation = self._generation
+            self._busy_port = opts.port
+
+        done = threading.Event()
+        failure: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                self._write(generation, opts, payload)
+            except BaseException as exc:  # noqa: BLE001 - reported, never raised
+                failure.append(exc)
+            finally:
+                with self._lock:
+                    self._busy_port = None
+                done.set()
+
+        threading.Thread(target=run, name="tspl-print", daemon=True).start()
+
+        # open() and write() each get their own pyserial timeout, so the worst
+        # legitimate case is about twice the configured value.
+        budget = opts.timeout_seconds * 2 + 1.0
+        if not done.wait(budget):
+            with self._lock:
+                # Anything up to and including this job is now disowned: if the
+                # worker ever gets its port open, it must throw the job away.
+                self._abandoned_through = generation
+            return (
+                f"The printer on {opts.port} did not respond within {budget:g} s. "
+                f"Check it is powered on and that the correct COM port is "
+                f"selected in Printer Setup. The label was not printed."
+            )
+
+        if failure:
+            exc = failure[0]
+            if isinstance(exc, serial.SerialException):
+                return (
+                    f"Could not print to {opts.port} — {exc}. Check the printer "
+                    f"is connected and the port is not in use by another program."
+                )
+            log.exception("unexpected failure printing to %s", opts.port, exc_info=exc)
+            return f"Could not print to {opts.port} — {exc}."
+        return ""
 
     def print_label(self, request: LabelPrintRequest) -> PrintResult:
         self.refresh_availability()
@@ -329,40 +433,11 @@ class PuquAq20SerialBackend:
 
         payload = self.build_tspl(request.image, plan)
 
-        # Run the serial I/O off the GUI thread with a hard deadline. pyserial's
-        # timeouts cover read and write but NOT open(), and opening a Bluetooth
-        # COM port can block for seconds while Windows brings the link up. This
-        # is what keeps a dead or wrong port to a bounded pause instead of a
-        # frozen tool. A worker stuck in open() is abandoned rather than waited
-        # on — the executor is single-threaded, so the next attempt queues
-        # behind it and fails the same bounded way.
-        budget = self._opts.timeout_seconds * 2 + 1.0
-        try:
-            self._io.submit(self._write, payload).result(timeout=budget)
-        except FutureTimeout:
-            return PrintResult(
-                PrintStatus.ERROR,
-                "Print Error",
-                f"The printer on {self._opts.port} did not respond within "
-                f"{budget:g} s. Check it is powered on and that the correct COM "
-                f"port is selected in Printer Setup.",
-            )
-        except serial.SerialException as exc:
-            return PrintResult(
-                PrintStatus.ERROR,
-                "Print Error",
-                f"Could not print to {self._opts.port} — {exc}. Check the "
-                f"printer is connected and the port is not in use by another "
-                f"program.",
-            )
-        except Exception as exc:  # noqa: BLE001 - a slot must never see this
-            log.exception("unexpected failure printing to %s", self._opts.port)
-            return PrintResult(
-                PrintStatus.ERROR,
-                "Print Error",
-                f"Could not print to {self._opts.port} — {exc}.",
-            )
-
+        # Snapshot the settings so a Printer Setup change mid-print cannot
+        # redirect this job to a different port.
+        problem = self._run_bounded(self._opts.model_copy(), payload)
+        if problem:
+            return PrintResult(PrintStatus.ERROR, "Print Error", problem)
         return PrintResult(PrintStatus.OK)
 
     # --- setup UI -----------------------------------------------------------
@@ -382,33 +457,26 @@ class PuquAq20SerialBackend:
                 label="Test connection",
                 callback=self._test_connection,
                 enabled=bool(self._opts.port),
-                tooltip="Open the COM port briefly to check the printer answers",
+                tooltip="Check the COM port can be opened and is not already in use",
             ),
         )
 
     def _test_connection(self, parent: QWidget | None) -> None:
         from PyQt6.QtWidgets import QMessageBox
 
-        budget = self._opts.timeout_seconds * 2 + 1.0
-        try:
-            # An empty write: proves the port opens and accepts data without
-            # feeding a label or changing any printer setting.
-            self._io.submit(self._write, b"").result(timeout=budget)
-        except FutureTimeout:
-            QMessageBox.warning(
-                parent, "PuQu AQ20",
-                f"{self._opts.port} did not respond within {budget:g} s.",
-            )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(
-                parent, "PuQu AQ20", f"Could not open {self._opts.port} — {exc}."
-            )
+        # Writes nothing: this checks only that the port opens and is free. The
+        # printer is never asked to answer, so nothing is fed and no setting is
+        # changed.
+        problem = self._run_bounded(self._opts.model_copy(), b"")
+        if problem:
+            QMessageBox.warning(parent, "PuQu AQ20", problem)
         else:
             QMessageBox.information(
                 parent, "PuQu AQ20",
-                f"{self._opts.port} opened successfully.\n\nThis confirms the port "
-                f"is there and free. It cannot confirm the printer understands "
-                f"TSPL — print one label and check it.",
+                f"{self._opts.port} opened successfully.\n\nThat confirms the port "
+                f"exists and nothing else is holding it. It does not confirm a "
+                f"printer is attached or that it understands TSPL — print one "
+                f"label and check it.",
             )
 
 
