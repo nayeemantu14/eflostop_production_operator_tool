@@ -24,14 +24,19 @@ ble_scan:
   valve_name_prefix: "eFloStop"
   sensor_name_prefix: "eleak"
 
+# Label printing. The label itself is fixed at 20 mm x 20 mm by the
+# manufacturing spec and is not configurable. These are factory defaults only —
+# the operator's selection and per-machine settings are stored per user and
+# survive upgrades. See docs/PRINTER_BACKENDS.md.
 label_printer:
-  enabled: false
-  connection: "usb"           # "usb" or "tcp"
-  tcp_host: ""
-  tcp_port: 9100
-  label_width_mm: 50
-  label_height_mm: 25
-  qr_size_mm: 25
+  backend: "system"           # "system" | "puqu_aq20" | "zpl_tcp"
+  backends:                   # per-backend defaults; each backend validates its own
+    puqu_aq20:
+      printer_name: ""        # exact Windows queue name; blank = choose in Printer Setup
+      resolution_dpi: 203     # AQ20 print head is 203 dpi
+    zpl_tcp:
+      host: ""
+      port: 9100
 
 test:
   boot_log_timeout_seconds: 15

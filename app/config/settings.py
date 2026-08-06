@@ -44,13 +44,24 @@ class BleScanSettings(BaseModel):
 
 
 class LabelPrinterSettings(BaseModel):
-    enabled: bool = False
-    connection: str = "usb"
-    tcp_host: str = ""
-    tcp_port: int = 9100
-    label_width_mm: int = 50
-    label_height_mm: int = 25
-    qr_size_mm: int = 25
+    """Which label-printer backend to use, and its factory defaults.
+
+    `backends` is deliberately untyped at this level: each backend validates its
+    own slice with its own model, so adding a printer never touches this file.
+    The label geometry is NOT configurable — 20 mm x 20 mm is a manufacturing
+    spec and lives in app/services/printing/geometry.py.
+
+    These are read-only factory defaults. The operator's actual choice and any
+    per-machine settings live in QSettings, because when the tool is frozen this
+    YAML sits inside PyInstaller's _internal/ directory where operators cannot
+    edit it and the installer overwrites it on every upgrade.
+    """
+
+    # Backend id, e.g. "system". An id that is not registered degrades to the
+    # system printer rather than failing. Ids are a persisted compatibility
+    # surface — see docs/PRINTER_BACKENDS.md.
+    backend: str = "system"
+    backends: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class TestSettings(BaseModel):
