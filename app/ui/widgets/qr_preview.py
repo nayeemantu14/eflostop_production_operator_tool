@@ -1,10 +1,15 @@
-"""QR code preview widget with system print support."""
+"""QR code preview widget with pluggable label printing.
+
+Owns the on-screen QR and the operator's Print / Printer Setup controls. It does
+not know how any printer works: it asks the selected backend to configure itself
+or to print, and shows whatever the backend reports. See
+app/services/printing/ and docs/PRINTER_BACKENDS.md.
+"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMarginsF, QRectF, QSizeF, Qt
-from PyQt6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPixmap
-from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -15,35 +20,57 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-# Fixed physical size of the printed QR label, in millimetres. Confirmed with
-# the manufacturing partner: every device's QR label (hub, valve, leak sensor)
-# is 20 mm x 20 mm. Too small for side text, so the printed label is QR-only.
-QR_LABEL_SIZE_MM = 20
+from ...services.printing import geometry
+from ...services.printing.base import LabelPrintRequest
+from ...services.printing.selection import PrinterSelection, shared_selection
+from .printer_selector import PrinterSelectorCombo
 
-# Below this printed size the QR's modules get too small to scan reliably on a
-# ~203 dpi thermal printer, so the operator is warned. A full-bleed 20 mm label
-# printer prints the full 20 mm and never trips this; it catches a mis-selected
-# printer whose hardware margin shrinks the QR (e.g. an office printer -> ~12 mm).
-QR_MIN_PRINT_MM = 18
+# Re-exported from the shared geometry module so the manufacturing spec has one
+# definition. Kept importable from here because the print-geometry tests and
+# other callers refer to them by this path.
+QR_LABEL_SIZE_MM = geometry.QR_LABEL_SIZE_MM
+QR_MIN_PRINT_MM = geometry.QR_MIN_PRINT_MM
+
+
+class _MessageBoxUi:
+    """Shows the shared print guards as native dialogs.
+
+    The guards live in the printing package, which has no business importing
+    QMessageBox; this adapter is how their questions reach the operator. Every
+    dialog is parented to the widget so it is modal and cannot end up behind the
+    main window.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        self._parent = parent
+
+    def confirm(self, title: str, message: str) -> bool:
+        return (
+            QMessageBox.question(
+                self._parent,
+                title,
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def warn(self, title: str, message: str) -> None:
+        QMessageBox.warning(self._parent, title, message)
 
 
 class QrPreview(QWidget):
     """Displays a QR code image with device info below and Print/Setup buttons."""
 
-    # Shared printer instance — retains settings (printer name, paper size,
-    # orientation, margins) across prints for the entire session.
-    _printer: QPrinter | None = None
-
-    @classmethod
-    def _get_printer(cls) -> QPrinter:
-        if cls._printer is None:
-            cls._printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        return cls._printer
-
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, selection: PrinterSelection | None = None):
         super().__init__(parent)
         self._qr_image: QImage | None = None
         self._info_text: str = ""
+        # Shared with every other QrPreview in the app, so changing the printer
+        # on one tab changes it everywhere. Injectable for tests.
+        self._selection = selection if selection is not None else shared_selection()
+        self._guard_ui = _MessageBoxUi(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -59,6 +86,16 @@ class QrPreview(QWidget):
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.info_label.setStyleSheet("color: #ccc; font-size: 11px; font-family: monospace;")
         self.info_label.setWordWrap(True)
+
+        # --- Printer row: which printer the label goes to ---
+        printer_row = QHBoxLayout()
+        printer_row.setSpacing(6)
+        printer_label = QLabel("Printer:")
+        printer_label.setStyleSheet("font-size: 11px;")
+        self.printer_combo = PrinterSelectorCombo(self._selection)
+        self.printer_combo.setMinimumWidth(180)
+        printer_row.addWidget(printer_label)
+        printer_row.addWidget(self.printer_combo, stretch=1)
 
         # --- Button row: Print + Printer Setup ---
         btn_row = QHBoxLayout()
@@ -87,14 +124,33 @@ class QrPreview(QWidget):
         btn_row.addWidget(self.print_btn)
         btn_row.addWidget(self.setup_btn)
 
+        # Extra per-backend operations (test print, calibration help, ...). The
+        # widget renders whatever the backend offers without knowing what any of
+        # it does, so a new printer can add a button with no change here.
+        self.actions_row = QHBoxLayout()
+        self.actions_row.setSpacing(6)
+
         layout.addWidget(self.image_label)
         layout.addWidget(self.info_label)
+        layout.addLayout(printer_row)
         layout.addLayout(btn_row)
+        layout.addLayout(self.actions_row)
+
+        self._selection.changed.connect(self._on_backend_changed)
+        self._refresh_backend_ui()
+
+    # --- QR content ---------------------------------------------------------
 
     def set_qr_png_bytes(self, png_bytes: bytes, info_text: str = "") -> None:
         """Display QR from PNG bytes."""
         img = QImage()
-        img.loadFromData(png_bytes)
+        if not img.loadFromData(png_bytes) or img.isNull():
+            # A QImage that failed to load is not None but is null, and would
+            # print as a blank 20 mm label. Refuse rather than label a device
+            # with nothing.
+            self.clear()
+            self.info_label.setText("QR image could not be read")
+            return
         self._qr_image = img
         self._info_text = info_text
 
@@ -121,167 +177,125 @@ class QrPreview(QWidget):
         self.print_btn.setVisible(False)
         self.setup_btn.setVisible(False)
 
+    # --- Backend plumbing ---------------------------------------------------
+
+    def _on_backend_changed(self, _backend_id: str) -> None:
+        self._refresh_backend_ui()
+
+    def _refresh_backend_ui(self) -> None:
+        """Re-render the parts of the panel that depend on the chosen backend."""
+        backend = self._selection.current_backend()
+
+        # Setup is offered only if the backend has something to configure —
+        # asked as a capability, never as "which backend is this".
+        self.setup_btn.setEnabled(
+            backend is not None and backend.capabilities.configurable
+        )
+
+        while self.actions_row.count():
+            item = self.actions_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if backend is None:
+            return
+        try:
+            actions = list(backend.actions())
+        except Exception:
+            actions = []
+        for action in actions:
+            button = QPushButton(action.label)
+            button.setEnabled(action.enabled)
+            if action.tooltip:
+                button.setToolTip(action.tooltip)
+            button.setStyleSheet("font-size: 11px; padding: 3px 8px;")
+            button.clicked.connect(
+                lambda _checked, cb=action.callback: self._run_action(cb)
+            )
+            self.actions_row.addWidget(button)
+
+    def _run_action(self, callback) -> None:
+        # Anything a backend raises here would otherwise escape a Qt slot, which
+        # terminates the process instead of unwinding.
+        try:
+            callback(self)
+        except Exception as exc:
+            QMessageBox.warning(self, "Printer", f"That printer action failed: {exc}")
+        else:
+            self._selection.persist_current_options()
+            self.printer_combo.reload()
+
     def _on_setup(self) -> None:
-        """Open printer/page setup dialog to configure printer settings."""
-        printer = self._get_printer()
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle("Printer Setup")
-        dialog.exec()
+        """Open the selected backend's own configuration UI."""
+        backend = self._selection.current_backend()
+        if backend is None:
+            QMessageBox.warning(
+                self, "Printer Setup",
+                "No label printer backend is available. Check the tool's "
+                "configuration.",
+            )
+            return
+        try:
+            backend.configure(self)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Printer Setup", f"Printer setup failed: {exc}"
+            )
+            return
+        self._selection.persist_current_options()
+        self.printer_combo.reload()
+        self._refresh_backend_ui()
 
     def _on_print(self) -> None:
-        """Print the QR label directly using the saved printer settings."""
+        """Print the QR label using the selected backend."""
         if self._qr_image is None:
             return
 
-        printer = self._get_printer()
+        backend = self._selection.current_backend()
+        if backend is None:
+            QMessageBox.warning(
+                self, "Print Error",
+                "No label printer backend is available. Check the tool's "
+                "configuration.",
+            )
+            return
 
-        # If no printer has been configured yet, open setup first
-        if not printer.printerName():
-            dialog = QPrintDialog(printer, self)
-            dialog.setWindowTitle("Select Printer")
-            if dialog.exec() != QPrintDialog.DialogCode.Accepted:
-                return
+        try:
+            request = LabelPrintRequest(
+                image=self._qr_image, ui=self._guard_ui, parent=self
+            )
+            result = backend.print_label(request)
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Print Error", f"Printing failed unexpectedly: {exc}"
+            )
+            return
 
-        self._paint_label(printer)
+        # An operator must never click Print and get silence. CANCELLED is the
+        # one quiet case: they just answered No to a guard dialog.
+        if result.needs_dialog:
+            QMessageBox.warning(
+                self, result.title or "Print Error",
+                result.message or "The label could not be printed.",
+            )
+            self.printer_combo.reload()
+
+    # --- Geometry helpers ---------------------------------------------------
+    # Thin delegates to the shared geometry module, kept on the widget so the
+    # existing print-geometry tests exercise the production predicates.
 
     @staticmethod
     def _mm_to_px(mm: float, dpi: int) -> int:
-        """Convert millimeters to device pixels at the given DPI.
-
-        Rounds (not truncates) so the physical size lands on the spec rather
-        than systematically a hair under it (e.g. 20 mm -> 20.02 mm not 19.90 mm
-        at 203 dpi).
-        """
-        return round(mm / 25.4 * dpi)
+        """Convert millimeters to device pixels at the given DPI."""
+        return geometry.mm_to_px(mm, dpi)
 
     @staticmethod
     def _px_to_mm(px: float, dpi: int) -> float:
         """Convert device pixels to millimetres (inverse of _mm_to_px)."""
-        return px * 25.4 / dpi
+        return geometry.px_to_mm(px, dpi)
 
     @classmethod
     def _is_undersized(cls, side_px: float, dpi: int) -> bool:
-        """True if the printed QR would fall below the scannable floor.
-
-        Shared by the print guard and its tests so the boundary can't silently
-        drift.
-        """
-        return side_px < cls._mm_to_px(QR_MIN_PRINT_MM, dpi)
-
-    def _paint_label(self, printer: QPrinter) -> None:
-        """Render the QR onto a fixed 20 mm x 20 mm label.
-
-        The manufacturing spec fixes every device's QR label at
-        ``QR_LABEL_SIZE_MM`` square — too small for side text, so the label is
-        QR-only. The page is forced to a 20 mm square full-bleed so the output
-        matches the label stock regardless of the printer's saved page setup;
-        the QR is then centred and scaled to fill the printable area. The QR
-        image already carries a 4-module quiet zone, which becomes the required
-        white border. Sizing is done in millimetres and converted to device
-        pixels via the printer's DPI, so the physical size is identical on every
-        printer regardless of resolution.
-        """
-        # Force the label media to the 20 mm x 20 mm manufacturing spec so the
-        # output is correct even if the operator's saved page setup differs.
-        printer.setFullPage(True)
-        printer.setPageSize(
-            QPageSize(
-                QSizeF(QR_LABEL_SIZE_MM, QR_LABEL_SIZE_MM),
-                QPageSize.Unit.Millimeter,
-            )
-        )
-        printer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout.Unit.Millimeter)
-
-        layout = printer.pageLayout()
-        dpi = printer.resolution()
-
-        # In full-bleed mode pageRect() is the whole 20 mm media (origin at the
-        # media corner). It does NOT reflect the printer's hardware non-printable
-        # border — that is exposed only via minimumMargins() — so read those
-        # separately and shrink the draw area to what the printer can actually
-        # mark. On a true full-bleed label printer the margins are ~0 and the QR
-        # fills the full 20 mm; a printer that cannot mark to the edge fits the QR
-        # inside the printable area instead of clipping it — and if that pushes
-        # the QR under 20 mm the operator is warned (see the size check below).
-        page = printer.pageRect(QPrinter.Unit.DevicePixel)
-        margins = layout.minimumMargins()  # QMarginsF, in the layout units (mm)
-        printable = QRectF(
-            page.left() + self._mm_to_px(margins.left(), dpi),
-            page.top() + self._mm_to_px(margins.top(), dpi),
-            page.width() - self._mm_to_px(margins.left() + margins.right(), dpi),
-            page.height() - self._mm_to_px(margins.top() + margins.bottom(), dpi),
-        )
-
-        # Fit the QR to the 20 mm target, never exceeding the printable area.
-        target_px = self._mm_to_px(QR_LABEL_SIZE_MM, dpi)
-        side = min(target_px, printable.width(), printable.height())
-
-        # Read back the media the driver actually accepted. setPageSize is a
-        # request, not a guarantee: a driver may reject the 20 mm custom size and
-        # fall back to a larger default page (Letter/A4), which would print a
-        # correct-size QR centred off the physical label. Catch that instead of
-        # silently wasting label stock.
-        page_mm = layout.pageSize().size(QPageSize.Unit.Millimeter)
-        tol_mm = 1.0
-        media_ok = (
-            abs(page_mm.width() - QR_LABEL_SIZE_MM) <= tol_mm
-            and abs(page_mm.height() - QR_LABEL_SIZE_MM) <= tol_mm
-        )
-        # A printer that accepts 20 mm media but cannot mark to the edge shrinks
-        # the QR. A true full-bleed label printer has ~0 margin so side == target
-        # and this stays False; a mis-selected office printer (several mm of
-        # border) shrinks the QR below the scannable floor and trips it.
-        undersized = self._is_undersized(side, dpi)
-
-        if side <= 0:
-            QMessageBox.warning(
-                self, "Print Error",
-                "The printer reported no printable area, so the 20 mm label "
-                "could not be rendered. Select the 20 mm label media in Printer "
-                "Setup and try again.",
-            )
-            return
-
-        if not media_ok:
-            proceed = QMessageBox.question(
-                self, "Label size is not 20 mm",
-                f"The selected printer's page is {page_mm.width():.1f} x "
-                f"{page_mm.height():.1f} mm, not the required 20 x 20 mm, so the "
-                f"QR may print off the label.\n\nSelect the 20 mm label media in "
-                f"Printer Setup, or print anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if proceed != QMessageBox.StandardButton.Yes:
-                return
-        elif undersized:
-            actual_mm = self._px_to_mm(side, dpi)
-            proceed = QMessageBox.question(
-                self, "QR would print under 20 mm",
-                f"This printer's non-printable border shrinks the QR to only "
-                f"{actual_mm:.1f} mm instead of 20 mm, so it may not scan "
-                f"reliably.\n\nSelect a full-bleed 20 mm label printer in Printer "
-                f"Setup, or print anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if proceed != QMessageBox.StandardButton.Yes:
-                return
-
-        painter = QPainter(printer)
-        if not painter.isActive():
-            QMessageBox.warning(
-                self, "Print Error",
-                "Could not start printing. Check that the printer is available.",
-            )
-            return
-
-        # Centre the QR within the printable area of the label.
-        qr_rect = QRectF(
-            printable.left() + (printable.width() - side) / 2,
-            printable.top() + (printable.height() - side) / 2,
-            side,
-            side,
-        )
-        painter.drawImage(qr_rect, self._qr_image)
-        painter.end()
+        """True if the printed QR would fall below the scannable floor."""
+        return geometry.is_undersized(side_px, dpi)
