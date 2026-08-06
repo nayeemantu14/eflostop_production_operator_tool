@@ -146,11 +146,15 @@ class PuquAq20Backend(QtDriverBackend):
 
     def configure(self, parent: QWidget | None) -> None:
         dialog = _PuquSetupDialog(self, parent)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._opts = self._opts.model_copy(
-                update={"printer_name": dialog.selected_printer()}
-            )
-            self.refresh_availability()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.selected_printer()
+        # Only overwrite with a real choice. An empty combo (no printers
+        # installed at all) would otherwise clear a perfectly good saved queue
+        # just because the operator pressed OK.
+        if chosen:
+            self._opts = self._opts.model_copy(update={"printer_name": chosen})
+        self.refresh_availability()
 
     def actions(self) -> Sequence[BackendAction]:
         return (
@@ -232,21 +236,38 @@ class _PuquSetupDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        self._combo.currentTextChanged.connect(lambda _: self._update_status())
+        # Connected AFTER the first _reload(): clear()/addItems() emit
+        # currentTextChanged for every item, and each emission would probe a
+        # driver, freezing the dialog for seconds on open.
         self._reload()
+        self._combo.currentTextChanged.connect(lambda _: self._update_status())
 
     def _reload(self) -> None:
         current = self._backend.target_printer_name()
         names = self._backend.candidate_printers()
         if self._only_likely.isChecked():
-            likely = [n for n in names if self._backend.is_likely_puqu(n)]
+            # The already-selected queue always stays in the list. Filtering it
+            # out would drop the combo to index 0, and OK then writes that
+            # different queue back — silently re-pinning the label printer to
+            # something else. That is exactly the case this backend has to
+            # support, since PUQU's driver may install under a generic name the
+            # hints do not match.
+            likely = [
+                n
+                for n in names
+                if self._backend.is_likely_puqu(n) or n == current
+            ]
             # Never present an empty list — an operator with an oddly-named
             # driver would have no way forward.
             names = likely or names
-        self._combo.clear()
-        self._combo.addItems(names)
-        if current and current in names:
-            self._combo.setCurrentText(current)
+        blocked = self._combo.blockSignals(True)
+        try:
+            self._combo.clear()
+            self._combo.addItems(names)
+            if current and current in names:
+                self._combo.setCurrentText(current)
+        finally:
+            self._combo.blockSignals(blocked)
         self._update_status()
 
     def _update_status(self) -> None:

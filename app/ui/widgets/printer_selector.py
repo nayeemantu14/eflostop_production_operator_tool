@@ -27,6 +27,11 @@ class PrinterSelectorCombo(QComboBox):
         self.reload()
         self.currentIndexChanged.connect(self._on_user_choice)
         selection.changed.connect(self._on_selection_changed)
+        # The backend instance is shared by every tab, so configuring the
+        # printer on one tab has to refresh the annotation on the others —
+        # otherwise they keep saying "no host configured" for a printer that is
+        # now set up, for the rest of the session.
+        selection.availability_changed.connect(self._on_availability_changed)
 
     def reload(self) -> None:
         """Rebuild the item list from the registry and current availability."""
@@ -63,6 +68,9 @@ class PrinterSelectorCombo(QComboBox):
         backend_id = self.currentData()
         if isinstance(backend_id, str) and backend_id:
             self._selection.set_current_id(backend_id)
+
+    def _on_availability_changed(self, _backend_id: str) -> None:
+        self.reload()
 
     def _on_selection_changed(self, _backend_id: str) -> None:
         """Follow a change made through another combo.

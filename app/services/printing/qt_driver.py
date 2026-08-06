@@ -62,7 +62,10 @@ class QtDriverBackend:
 
     id: ClassVar[str] = ""
     display_name: ClassVar[str] = ""
-    capabilities: ClassVar[BackendCapabilities] = BackendCapabilities()
+    # Defaults to NOT configurable so a subclass that forgets to override
+    # configure() gets a greyed-out Setup button rather than an error dialog.
+    # Subclasses that implement configure() set configurable=True.
+    capabilities: ClassVar[BackendCapabilities] = BackendCapabilities(configurable=False)
     sort_order: ClassVar[int] = 100
 
     # Set by subclasses that pin a specific queue. When None the backend uses
@@ -149,7 +152,10 @@ class QtDriverBackend:
         return self._availability
 
     def configure(self, parent: QWidget | None) -> None:  # pragma: no cover - UI
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{type(self).__name__} declares capabilities.configurable=True but "
+            f"does not implement configure()"
+        )
 
     def options(self) -> Mapping[str, Any]:
         return {}
@@ -182,4 +188,4 @@ class QtDriverBackend:
         if run_guards(plan, request.ui) is GuardOutcome.ABORTED:
             return PrintResult(PrintStatus.CANCELLED)
 
-        return qt_geometry.draw(printer, request.image, plan, request.ui)
+        return qt_geometry.draw(printer, request.image, plan)

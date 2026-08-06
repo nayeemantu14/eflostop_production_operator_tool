@@ -40,7 +40,15 @@ class SystemPrinterBackend(QtDriverBackend):
         # Always usable — if no printer has been chosen yet, print_label opens
         # the selection dialog rather than refusing, which is what this backend
         # has always done.
-        self._availability = Availability(True, self._get_printer().printerName())
+        #
+        # Deliberately does NOT call _get_printer(): this runs while the printer
+        # dropdown is being populated, which happens during MainWindow
+        # construction, and constructing a QPrinter costs ~1.5 s when the
+        # default printer is a network queue. Forcing it here put that delay on
+        # every application launch, before the window was even shown. The
+        # QPrinter is built on first real use instead.
+        name = self._printer.printerName() if self._printer is not None else ""
+        self._availability = Availability(True, name)
         return self._availability
 
     def configure(self, parent: QWidget | None) -> None:

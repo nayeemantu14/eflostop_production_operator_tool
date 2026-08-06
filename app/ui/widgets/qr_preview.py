@@ -113,7 +113,11 @@ class QrPreview(QWidget):
 
         self.setup_btn = QPushButton("Printer Setup")
         self.setup_btn.setFixedHeight(36)
-        self.setup_btn.setVisible(False)
+        # Always visible, unlike Print Label. Configuring the printer is setup
+        # work an operator does when the line starts, before any device has
+        # passed — and the dropdown tells them to "open Printer Setup" when a
+        # printer is unconfigured, which it cannot do if the button is hidden.
+        self.setup_btn.setVisible(True)
         self.setup_btn.setStyleSheet(
             "QPushButton { background-color: #1565C0; color: white; font-size: 13px; "
             "font-weight: bold; border-radius: 4px; }"
@@ -137,6 +141,9 @@ class QrPreview(QWidget):
         layout.addLayout(self.actions_row)
 
         self._selection.changed.connect(self._on_backend_changed)
+        # Backends are shared across tabs, so a setup done on one tab must
+        # re-enable the other tabs' action buttons too.
+        self._selection.availability_changed.connect(self._on_backend_changed)
         self._refresh_backend_ui()
 
     # --- QR content ---------------------------------------------------------
@@ -166,7 +173,6 @@ class QrPreview(QWidget):
         self.image_label.setPixmap(scaled)
         self.info_label.setText(info_text)
         self.print_btn.setVisible(True)
-        self.setup_btn.setVisible(True)
 
     def clear(self) -> None:
         self._qr_image = None
@@ -175,7 +181,6 @@ class QrPreview(QWidget):
         self.image_label.setText("")
         self.info_label.setText("No QR generated")
         self.print_btn.setVisible(False)
-        self.setup_btn.setVisible(False)
 
     # --- Backend plumbing ---------------------------------------------------
 
@@ -223,8 +228,9 @@ class QrPreview(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Printer", f"That printer action failed: {exc}")
         else:
+            # persist_current_options announces the change, which refreshes the
+            # dropdown and the action row on every tab, not just this one.
             self._selection.persist_current_options()
-            self.printer_combo.reload()
 
     def _on_setup(self) -> None:
         """Open the selected backend's own configuration UI."""
@@ -244,8 +250,6 @@ class QrPreview(QWidget):
             )
             return
         self._selection.persist_current_options()
-        self.printer_combo.reload()
-        self._refresh_backend_ui()
 
     def _on_print(self) -> None:
         """Print the QR label using the selected backend."""
@@ -279,7 +283,7 @@ class QrPreview(QWidget):
                 self, result.title or "Print Error",
                 result.message or "The label could not be printed.",
             )
-            self.printer_combo.reload()
+            self._selection.notify_availability_changed()
 
     # --- Geometry helpers ---------------------------------------------------
     # Thin delegates to the shared geometry module, kept on the widget so the

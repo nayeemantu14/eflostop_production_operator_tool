@@ -12,13 +12,20 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest  # noqa: E402
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def qapp():
     """One QApplication for the whole session.
 
     Qt allows only one per process and does not support recreating it, so this
-    is session-scoped. Constructing any QWidget without it aborts the
-    interpreter outright rather than raising, which would take down the run.
+    is session-scoped.
+
+    `autouse` because forgetting it is not a normal test failure: constructing a
+    QPrinter or a QWidget with no QApplication aborts the interpreter with
+    0xC0000409, which pytest cannot catch or attribute. The run stops mid-file
+    with a single dot and no summary, so the remaining tests are silently
+    skipped rather than reported. Making it automatic removes the whole class of
+    ordering-dependent failure — a suite that passes only because some earlier
+    file happened to build the application is not passing.
     """
     from PyQt6.QtWidgets import QApplication
 

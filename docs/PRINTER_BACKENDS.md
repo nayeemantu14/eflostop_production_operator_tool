@@ -12,8 +12,9 @@ and production support setting up the PUQU AQ20 on a line ([§3](#3-puqu-aq20-se
 
 ## 1. How to add a new printer
 
-Adding a printer is **one new module plus one import line**. Nothing else — no changes to the UI, the
-device tabs, the config schema, the persistence layer, or the PyInstaller build.
+Adding a printer is **one new module plus one import line** of application code. Nothing else — no
+changes to the UI, the device tabs, the config schema, the persistence layer, or the PyInstaller
+build. (You will also update three deliberately-pinned assertions in the registry test — see §1.5.)
 
 ### 1.1 Pick your starting point
 
@@ -161,7 +162,7 @@ Add `tests/test_printing_backends.py` cases (or your own module) covering:
 | Options round-trip through `apply_options`/`options` | Persistence is JSON — non-serialisable values are lost |
 | Unavailable state returns `UNAVAILABLE`, not silence | An operator must never click Print and get nothing |
 | A stale/removed target is refused, not redirected | See the `setPrinterName` trap in §1.6 |
-| Your `id` appears in the pinned-id set in `test_printing_registry.py` | Ids are a compatibility surface |
+| Update the three id/order assertions in `tests/test_printing_registry.py` (`test_backend_ids_are_pinned`, `test_dropdown_order_is_declared_not_import_order`, `test_registry_is_populated_by_import_alone`) | Ids are a compatibility surface, so they are pinned deliberately — adding a printer is expected to update these |
 
 `tests/test_printing_extensibility.py` already proves the *generic* path (registration → dropdown →
 selection → persistence → dispatch → guards) for any backend, so you don't need to retest that.

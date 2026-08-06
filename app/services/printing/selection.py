@@ -210,7 +210,12 @@ class PrinterSelection(QObject):
         return self.backend(self._current_id)
 
     def persist_current_options(self) -> None:
-        """Write the selected backend's options back to storage."""
+        """Write the selected backend's options back to storage.
+
+        Also announces that the backend's state may have moved, because the
+        backend instance is shared by every tab: configuring the printer on one
+        tab changes what the other tabs' dropdowns should be saying about it.
+        """
         backend = self.current_backend()
         if backend is None:
             return
@@ -218,6 +223,11 @@ class PrinterSelection(QObject):
             self.save_options(self._current_id, dict(backend.options()))
         except Exception:
             log.exception("backend %r options() failed", self._current_id)
+        self.availability_changed.emit(self._current_id)
+
+    def notify_availability_changed(self) -> None:
+        """Tell every view that the selected backend's state may have moved."""
+        self.availability_changed.emit(self._current_id)
 
     # --- what the UI renders ------------------------------------------------
 

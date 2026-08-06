@@ -17,7 +17,6 @@ from .geometry import (
     NO_PRINTABLE_AREA_BODY,
     NO_PRINTABLE_AREA_TITLE,
     QR_LABEL_SIZE_MM,
-    GuardUi,
     LabelPlan,
     Margins,
     PrinterMetrics,
@@ -111,12 +110,17 @@ def rasterize(image: QImage, side: float) -> QImage:
     )
 
 
-def draw(printer: QPrinter, image: QImage, plan: LabelPlan, ui: GuardUi) -> PrintResult:
-    """Paint the QR onto the prepared page, centred in the printable area."""
+def draw(printer: QPrinter, image: QImage, plan: LabelPlan) -> PrintResult:
+    """Paint the QR onto the prepared page, centred in the printable area.
+
+    Failures are reported through the returned :class:`PrintResult` only — the
+    caller raises exactly one dialog for it. Warning here as well would show the
+    operator two identical modals for one failed print, where the tool has
+    always shown one.
+    """
     if plan.side <= 0:
-        # plan_label already ruled this out via run_guards, but a backend could
-        # call draw() directly; refusing beats painting a zero-size rect.
-        ui.warn(NO_PRINTABLE_AREA_TITLE, NO_PRINTABLE_AREA_BODY)
+        # run_guards already rules this out, but a backend could call draw()
+        # directly; refusing beats painting a zero-size rect.
         return PrintResult(
             PrintStatus.ERROR, NO_PRINTABLE_AREA_TITLE, NO_PRINTABLE_AREA_BODY
         )
@@ -125,7 +129,6 @@ def draw(printer: QPrinter, image: QImage, plan: LabelPlan, ui: GuardUi) -> Prin
     if not painter.isActive():
         # The printer went away between the availability check and here (powered
         # off, unplugged, spooler refused the job).
-        ui.warn(COULD_NOT_START_TITLE, COULD_NOT_START_BODY)
         return PrintResult(
             PrintStatus.ERROR, COULD_NOT_START_TITLE, COULD_NOT_START_BODY
         )
