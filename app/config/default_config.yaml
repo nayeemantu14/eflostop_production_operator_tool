@@ -29,11 +29,19 @@ ble_scan:
 # the operator's selection and per-machine settings are stored per user and
 # survive upgrades. See docs/PRINTER_BACKENDS.md.
 label_printer:
-  backend: "system"           # "system" | "puqu_aq20" | "zpl_tcp"
+  backend: "system"           # "system" | "puqu_aq20" | "puqu_aq20_serial" | "zpl_tcp"
   backends:                   # per-backend defaults; each backend validates its own
     puqu_aq20:
       printer_name: ""        # exact Windows queue name; blank = choose in Printer Setup
       resolution_dpi: 203     # AQ20 print head is 203 dpi
+    puqu_aq20_serial:
+      port: ""              # COM port the printer enumerates as; blank = choose in Printer Setup
+      label_width_mm: 20    # stock loaded in the printer
+      label_height_mm: 20
+      gap_mm: 2.0           # vertical gap between die-cut labels
+      density: 8            # TSPL darkness 0-15
+      speed: 3              # inches/sec
+      invert: false         # set true if the label prints as a photographic negative
     zpl_tcp:
       host: ""
       port: 9100

@@ -60,7 +60,12 @@ def test_backend_ids_are_pinned():
     # Backend ids are written into the operator's saved settings. Renaming one
     # silently resets every machine that had it selected, so a rename must
     # break this test and be a deliberate, documented decision.
-    assert set(default_registry().ids()) == {"system", "puqu_aq20", "zpl_tcp"}
+    assert set(default_registry().ids()) == {
+        "system",
+        "puqu_aq20",
+        "puqu_aq20_serial",
+        "zpl_tcp",
+    }
 
 
 def test_system_backend_exists_as_the_fallback():
@@ -69,7 +74,12 @@ def test_system_backend_exists_as_the_fallback():
 
 def test_dropdown_order_is_declared_not_import_order():
     # sort_order, then display name — never wherever someone pasted the import.
-    assert default_registry().ids() == ("system", "puqu_aq20", "zpl_tcp")
+    assert default_registry().ids() == (
+        "system",
+        "puqu_aq20",
+        "puqu_aq20_serial",
+        "zpl_tcp",
+    )
 
 
 def test_registry_order_is_stable_across_calls():
@@ -196,4 +206,4 @@ def test_registry_is_populated_by_import_alone():
         timeout=120,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "system,puqu_aq20,zpl_tcp"
+    assert result.stdout.strip() == "system,puqu_aq20,puqu_aq20_serial,zpl_tcp"

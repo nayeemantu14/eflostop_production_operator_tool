@@ -52,6 +52,7 @@ from ..geometry import (
     GuardOutcome,
     Margins,
     PrinterMetrics,
+    mm_to_px,
     plan_label,
     run_guards,
 )
@@ -284,8 +285,10 @@ class ZplSocketBackend:
         dpi = self._opts.dpi
         margin = self._opts.margins_mm
         return PrinterMetrics(
-            page_w_px=self._opts.label_width_mm / 25.4 * dpi,
-            page_h_px=self._opts.label_height_mm / 25.4 * dpi,
+            # mm_to_px, not a raw float division — see the note in the AQ20
+            # serial backend: the shared geometry rounds the same way.
+            page_w_px=mm_to_px(self._opts.label_width_mm, dpi),
+            page_h_px=mm_to_px(self._opts.label_height_mm, dpi),
             media_w_mm=self._opts.label_width_mm,
             media_h_mm=self._opts.label_height_mm,
             margins_mm=Margins(margin, margin, margin, margin),

@@ -66,11 +66,15 @@ remembered per user across restarts and upgrades.
 
 ```yaml
 label_printer:
-  backend: "system"           # "system" | "puqu_aq20" | "zpl_tcp"
+  backend: "system"           # "system" | "puqu_aq20" | "puqu_aq20_serial" | "zpl_tcp"
   backends:                   # factory defaults; each backend validates its own keys
     puqu_aq20:
       printer_name: ""        # exact Windows queue name; blank = choose in Printer Setup
       resolution_dpi: 203
+    puqu_aq20_serial:
+      port: ""              # COM port (USB or Bluetooth); blank = choose in Printer Setup
+      label_width_mm: 20
+      label_height_mm: 20
     zpl_tcp:
       host: ""
       port: 9100

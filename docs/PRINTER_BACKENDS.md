@@ -6,7 +6,8 @@ paper" for one class of printer. The operator picks one from a dropdown in the Q
 else is shared.
 
 This document is for two audiences: developers adding a printer ([§1](#1-how-to-add-a-new-printer)),
-and production support setting up the PUQU AQ20 on a line ([§3](#3-puqu-aq20-setup-for-the-line)).
+and production support setting up the PUQU AQ20 on a line — either through its Windows driver
+([§3](#3-puqu-aq20-setup-for-the-line)) or over USB/Bluetooth serial ([§4](#4-puqu-aq20-usb-serial--tspl)).
 
 ---
 
@@ -22,6 +23,7 @@ build. (You will also update three deliberately-pinned assertions in the registr
 |---|---|---|
 | Reachable through an installed **Windows print driver** | `QtDriverBackend` | ~40 lines |
 | A **ZPL** printer on the network | `ZplSocketBackend` | ~20 lines |
+| A **TSPL** printer on a serial/USB-VCP port | `PuquAq20SerialBackend` | ~30 lines |
 | Anything else (raw USB, serial, vendor SDK) | implement the protocol directly | ~150 lines |
 
 Most printers are the first row. If Windows can see it in *Printers & scanners*, use `QtDriverBackend`
@@ -197,8 +199,12 @@ These are all things that have actually gone wrong, verified on Windows with PyQ
 | id | Display name | Transport | Notes |
 |---|---|---|---|
 | `system` | System printer (any) | Windows driver, native print dialog | The default. Unchanged legacy behaviour. Also the fallback for an unknown id. |
-| `puqu_aq20` | PUQU AQ20 | Windows driver, pinned queue | 203 dpi, 20 × 20 mm forced. See §3. |
+| `puqu_aq20` | PUQU AQ20 | Windows driver, pinned queue | Needs PUQU's Windows driver installed. 203 dpi, 20 × 20 mm forced. See §3. |
+| `puqu_aq20_serial` | PuQu AQ20 (USB Serial) | Virtual COM port, raw **TSPL** | Same printer, no driver needed. Also covers Bluetooth. See §4. |
 | `zpl_tcp` | ZPL printer (network) | Raw TCP:9100, `^GFA` raster | Replaces the tool's old dead ZPL module. |
+
+The two AQ20 entries are alternatives, not duplicates: `puqu_aq20` goes through the Windows print
+driver, `puqu_aq20_serial` talks to the printer directly. Use whichever the line has set up.
 
 > **Backend ids are a persisted compatibility surface.** They are written into each operator's
 > settings (`HKCU\Software\eFloStop\eFloStop II Production Tool`). **Renaming one is a breaking
@@ -306,3 +312,59 @@ spec and no SDK. The only wire-level document in circulation
 different manufacturer's device — and nothing confirms the AQ20 speaks it. Guessing byte sequences for
 the printer that labels shipped hardware is not a trade worth making. If PUQU answers question 1, a
 raw transport becomes a new backend module under `backends/`, changing nothing else.
+
+
+---
+
+## 4. PuQu AQ20 (USB Serial) — TSPL
+
+The same printer as §3, reached without installing any driver. Use this when the AQ20 is plugged in
+over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
+
+### 4.1 Set it up
+
+1. Plug the AQ20 in over USB, or pair it in Windows Bluetooth settings. Either way it appears in
+   *Device Manager → Ports (COM & LPT)*. Note the COM number.
+2. In the tool, set **Printer** to `PuQu AQ20 (USB Serial)`.
+3. Press **Printer Setup**. Pick the **COM Port** — press **Refresh** if you plugged it in after
+   opening the dialog. Leave the label size at 20 × 20 mm unless you loaded different stock.
+4. **Test connection** confirms the port opens and is not held by another program. It cannot confirm
+   the printer understands the commands — only a real label does that.
+5. Load media and calibrate as in §3.2, then print one label and **scan it**.
+
+### 4.2 Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| COM Port | — | The port the printer enumerates as. USB and Bluetooth both appear here. |
+| Baud rate | 115200 | Ignored by a USB virtual COM port; may matter over Bluetooth. |
+| Label width / height | 20 mm | The stock you loaded. The tool cannot read this from the printer. |
+| Gap between labels | 2 mm | Vertical gap for the printer's gap sensor. 0 = continuous stock. |
+| Density | 8 | TSPL print darkness, 0 (lightest) to 15 (darkest). |
+| Speed | 3 | Inches per second. |
+| Invert bitmap | off | **If the first label prints as a photographic negative, tick this.** See 4.4. |
+
+### 4.3 If it does not print
+
+- *"no COM port chosen"* / *"COMn not connected"* — the port is not there. Refresh the list in Setup.
+- *"did not respond within N s"* — the port exists but nothing answered in time. Usually the wrong
+  port (some other device), or a Bluetooth link that did not come up. The tool gives up rather than
+  freezing.
+- *"Access is denied"* — another program holds the port. Close the vendor app or any terminal.
+
+### 4.4 Known gaps — needs bench verification
+
+- **That the AQ20 speaks TSPL at all** rests on hands-on testing, not on anything PUQU publishes.
+- **Bitmap polarity.** TSPL prints a dot where the bit is `0` — the inverse of ZPL. That is the
+  convention this backend implements. If the first label comes out as a negative (solid black with a
+  white QR), tick **Invert bitmap** in Setup; no code change is needed.
+- **20 × 20 mm gap stock.** PUQU publishes no minimum label height, so whether the gap sensor can
+  index a 20 mm label is still unproven.
+
+### 4.5 The TSPL job
+
+One label is sent as, in order: `SIZE`, `GAP`, `DIRECTION 0,0`, `REFERENCE 0,0`, `DENSITY`, `SPEED`,
+`CLS`, `BITMAP`, `PRINT 1,1` — each CRLF-terminated, per TSC's TSPL/TSPL2 manual. Every state-bearing
+command is sent on every job rather than assumed: `DIRECTION`'s second argument is a mirror flag the
+printer remembers across power cycles, and a mirrored QR is unscannable with nothing in the tool able
+to detect it. `BITMAP` takes its width in **bytes** and its height in **dots**.

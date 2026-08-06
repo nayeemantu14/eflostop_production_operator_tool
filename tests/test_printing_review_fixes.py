@@ -315,5 +315,10 @@ def test_no_test_constructs_qt_without_the_session_application():
 
 def test_registry_is_not_mutated_by_the_test_suite():
     """Tests register fakes into their own Registry, never the global one."""
-    assert set(default_registry().ids()) == {"system", "puqu_aq20", "zpl_tcp"}
+    assert set(default_registry().ids()) == {
+        "system",
+        "puqu_aq20",
+        "puqu_aq20_serial",
+        "zpl_tcp",
+    }
     assert isinstance(Registry(), Registry)

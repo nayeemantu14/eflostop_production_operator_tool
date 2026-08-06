@@ -71,3 +71,24 @@ def find_any_serial_ports() -> list[DetectedPort]:
                 serial_number=info.serial_number or "",
             ))
     return results
+
+
+def find_all_serial_ports() -> list[DetectedPort]:
+    """Find every COM port, including those with no USB VID/PID.
+
+    The detectors above all filter on VID because they are looking for one
+    specific USB chip. This one deliberately does not: a Bluetooth SPP port and
+    a motherboard's built-in serial port both report ``vid=None``, and a label
+    printer paired over Bluetooth shows up as exactly that. Filtering them out
+    would hide the printer the operator is trying to select.
+    """
+    return [
+        DetectedPort(
+            port=info.device,
+            description=info.description or "",
+            vid=info.vid or 0,
+            pid=info.pid or 0,
+            serial_number=info.serial_number or "",
+        )
+        for info in serial.tools.list_ports.comports()
+    ]
