@@ -13,5 +13,6 @@ from __future__ import annotations
 
 from . import puqu_aq20  # noqa: F401
 from . import system  # noqa: F401
+from . import zpl_tcp  # noqa: F401
 
-__all__ = ["puqu_aq20", "system"]
+__all__ = ["puqu_aq20", "system", "zpl_tcp"]

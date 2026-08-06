@@ -112,28 +112,8 @@ def generate_qr_bytes(payload: str, box_size: int = 10) -> bytes:
     return buf.getvalue()
 
 
-def build_zpl_label(
-    payload: str,
-    serial_number: str,
-    ble_mac: str,
-    fw_version: str,
-    date_str: str,
-    device_name: str,
-    label_width_dots: int = 406,  # 50mm at 203dpi
-    label_height_dots: int = 203,  # 25mm at 203dpi
-) -> str:
-    """Build ZPL II label command string.
-
-    Layout: QR left, human-readable text right.
-    """
-    ble_short = ble_mac[-5:] if len(ble_mac) >= 5 else ble_mac
-
-    zpl = f"""^XA
-^FO20,20^BQN,2,5^FDMA,{payload}^FS
-^FO220,20^A0N,24,24^FDSN: {serial_number}^FS
-^FO220,50^A0N,24,24^FDBLE: ...{ble_short}^FS
-^FO220,80^A0N,24,24^FDFW: {fw_version}^FS
-^FO220,110^A0N,24,24^FD{date_str}^FS
-^FO220,145^A0N,28,28^FD{device_name}^FS
-^XZ"""
-    return zpl
+# The old build_zpl_label() lived here: a 50 x 25 mm two-column layout with the
+# QR beside human-readable text. It was never wired up, and the label it drew
+# contradicts the 20 mm QR-only manufacturing spec. ZPL printing now lives in
+# app/services/printing/backends/zpl_tcp.py, which rasterises the same QR image
+# the driver backends print, at the same shared 20 mm geometry.
