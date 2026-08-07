@@ -200,7 +200,7 @@ These are all things that have actually gone wrong, verified on Windows with PyQ
 |---|---|---|---|
 | `system` | System printer (any) | Windows driver, native print dialog | The default. Unchanged legacy behaviour. Also the fallback for an unknown id. |
 | `puqu_aq20` | PUQU AQ20 | Windows driver, pinned queue | Needs PUQU's Windows driver installed. 203 dpi, 20 × 20 mm forced. See §3. |
-| `puqu_aq20_serial` | PuQu AQ20 (USB Serial) | Virtual COM port, raw **TSPL** | Same printer, no driver needed. Also covers Bluetooth. See §4. |
+| `puqu_aq20_serial` | PuQu AQ20 (USB Serial) | COM **or LPT** port, raw **TSPL** | Same printer, no driver needed. Covers USB, Bluetooth and LPT. See §4. |
 | `zpl_tcp` | ZPL printer (network) | Raw TCP:9100, `^GFA` raster | Replaces the tool's old dead ZPL module. |
 
 The two AQ20 entries are alternatives, not duplicates: `puqu_aq20` goes through the Windows print
@@ -318,16 +318,22 @@ raw transport becomes a new backend module under `backends/`, changing nothing e
 
 ## 4. PuQu AQ20 (USB Serial) — TSPL
 
-The same printer as §3, reached without installing any driver. Use this when the AQ20 is plugged in
-over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
+The same printer as §3, reached without installing any driver.
+
+**Windows does not present this printer the same way on every machine.** Depending on which driver
+Windows binds, the AQ20 comes up either as a **virtual COM port** (USB CDC, or an outgoing Bluetooth
+SPP port) or as an **LPT port** — LPT1 was what a real production PC gave it. Both work; the port
+dropdown lists both and you pick whichever is there. The difference matters because pyserial cannot
+open an LPT port at all — it filters LPT out of its own enumeration — so the tool writes to those as a
+raw byte pipe instead. Baud rate is ignored on an LPT port.
 
 ### 4.1 Set it up
 
 1. Plug the AQ20 in over USB, or pair it in Windows Bluetooth settings. Either way it appears in
-   *Device Manager → Ports (COM & LPT)*. Note the COM number.
+   *Device Manager → Ports (COM & LPT)*. Note whether it is a **COMn** or an **LPTn**.
 2. In the tool, set **Printer** to `PuQu AQ20 (USB Serial)`.
-3. Press **Printer Setup**. Pick the **COM Port** — press **Refresh** if you plugged it in after
-   opening the dialog. Leave the label size at 20 × 20 mm unless you loaded different stock.
+3. Press **Printer Setup**. Pick the **Printer Port** — COM and LPT ports are both listed. Press
+   **Refresh** if you plugged it in after opening the dialog. Leave the label size at 20 × 20 mm unless you loaded different stock.
 4. **Test connection** confirms the port opens and is not held by another program. It cannot confirm
    the printer understands the commands — only a real label does that.
 5. Load media and calibrate as in §3.2, then print one label and **scan it**.
@@ -336,8 +342,8 @@ over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
 
 | Setting | Default | What it does |
 |---|---|---|
-| COM Port | — | The port the printer enumerates as. USB and Bluetooth both appear here. |
-| Baud rate | 115200 | Ignored by a USB virtual COM port; may matter over Bluetooth. |
+| Printer Port | — | The port the printer enumerates as. COM (USB or Bluetooth) and LPT ports both appear. |
+| Baud rate | 115200 | Ignored by a USB virtual COM port and by LPT entirely; may matter over Bluetooth. Greyed out when an LPT port is selected. |
 | Timeout | 1.5 s | Worst case is about twice this plus a second. Kept under the ~5 s at which Windows paints a window "Not Responding". Raise it if a Bluetooth link needs longer to come up. |
 | Label width / height | 20 mm | The stock you loaded. The tool cannot read this from the printer. |
 | Gap between labels | 2 mm | Vertical gap for the printer's gap sensor. 0 = continuous stock. |
@@ -347,7 +353,10 @@ over USB (it enumerates as a Virtual COM Port) or paired over Bluetooth.
 
 ### 4.3 If it does not print
 
-- *"no COM port chosen"* / *"COMn not connected"* — the port is not there. Refresh the list in Setup.
+- *"no printer port chosen"* / *"COMn not connected"* — the port is not there. Refresh the list in Setup.
+- **The printer is not in the list at all** — check *Device Manager → Ports (COM & LPT)*. If it is
+  there as LPTn it should be listed; if it appears only under *Printers*, use the driver-based
+  **PUQU AQ20** entry (§3) instead of this one.
 - *"did not respond within N s"* — the port exists but nothing opened in time. Usually the wrong port
   (some other device), or a Bluetooth link that did not come up. **The label was not printed** — the
   tool disowns a job it has given up on, so it cannot surface later and print the wrong serial.
@@ -377,7 +386,17 @@ that look like over-engineering are not:
   generation counter and discards the label. Without that, a slow-but-eventually-successful open
   printed a label after the operator had been told it failed and moved to the next device.
 
-### 4.6 The TSPL job
+### 4.6 How the bytes reach the printer
+
+| Port kind | Opened as | Notes |
+|---|---|---|
+| `COMn` | pyserial `Serial(port, baudrate, timeout, write_timeout)` | USB CDC or Bluetooth SPP |
+| `LPTn` | `open(r"\\.\LPTn", "wb", buffering=0)` | Raw byte pipe. No baud, no flow control, no timeout of its own — the bounded worker in §4.5 is what covers it. |
+
+LPT ports are discovered with `QueryDosDevice`, which resolves the name without opening the device —
+opening a printer port can block, and the port list is drawn on the UI thread.
+
+### 4.7 The TSPL job
 
 One label is sent as, in order: `SIZE`, `GAP`, `DIRECTION 0,0`, `REFERENCE 0,0`, `DENSITY`, `SPEED`,
 `CLS`, `BITMAP`, `PRINT 1,1` — each CRLF-terminated, per TSC's TSPL/TSPL2 manual. Every state-bearing

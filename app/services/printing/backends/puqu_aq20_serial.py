@@ -1,22 +1,31 @@
-"""PuQu AQ20 over a USB Virtual COM Port, speaking raw TSPL.
+"""PuQu AQ20 driven directly over its port, speaking raw TSPL.
 
 A second way to drive the same printer as ``puqu_aq20``. That backend goes
-through PUQU's Windows driver; this one talks to the printer directly over the
-serial port it enumerates as, which needs no driver installed and also works
-over Bluetooth (see below).
+through PUQU's Windows driver; this one writes to the printer's port directly,
+which needs no driver installed.
+
+**Which port.** Windows does not present this printer the same way on every
+machine, so both kinds are offered and the operator picks:
+
+* a **virtual COM port** (USB CDC, or an outgoing Bluetooth SPP port), driven
+  through pyserial; or
+* an **LPT port** — observed on a real production PC, where Windows bound the
+  AQ20 to LPT1. pyserial cannot open one at all (it filters LPT out of its own
+  enumeration), so those bytes go to the DOS device as a raw byte pipe. No baud
+  rate, no flow control; TSPL needs neither.
 
 **Where the protocol knowledge comes from.** The TSPL command semantics below
 are from TSC's TSPL/TSPL2 Programming Manual (2014), which is public and
-citable. That the *AQ20* accepts TSPL over its virtual COM port is **not**
-published by PUQU anywhere I could find — it comes from hands-on testing by the
-project owner. Treat the command set as documented and the fact that this
-printer speaks it as verified on the bench, not on paper.
+citable. That the *AQ20* accepts TSPL at all is **not** published by PUQU
+anywhere I could find — it comes from hands-on testing by the project owner.
+Treat the command set as documented and the fact that this printer speaks it as
+verified on the bench, not on paper.
 
-**Bluetooth.** A paired AQ20 exposes an outgoing COM port on Windows, so this
-backend drives it over Bluetooth with no extra code — the operator just picks
-that port. It is also the reason the write runs on a bounded worker thread:
-opening a Bluetooth COM port can block for seconds while Windows brings the link
-up, and no pyserial timeout covers ``open()``.
+**Why the write runs on a bounded worker thread.** Neither open path has a
+timeout of its own: pyserial's timeouts do not cover ``open()``, and opening an
+LPT device or a Bluetooth COM port can block for seconds while Windows brings
+the link up. The deadline in :meth:`_run_bounded` is the only thing that keeps a
+wedged printer port from freezing the tool.
 
 NEEDS BENCH VERIFICATION: the bitmap bit polarity (see :func:`pack_tspl_bitmap`),
 that 20 x 20 mm gap stock feeds and calibrates, and a scan test of the result.
@@ -47,7 +56,7 @@ from PyQt6.QtWidgets import (
 )
 from pydantic import BaseModel, field_validator
 
-from ....services.port_detector import find_all_serial_ports
+from ....services.port_detector import find_all_serial_ports, find_parallel_ports
 from .. import qt_geometry
 from ..base import (
     Availability,
@@ -79,12 +88,37 @@ EOL = b"\r\n"
 PORT_NAME_HINTS = ("PUQU", "AQ20", "AQ00", "PQ00", "LABEL", "PRINTER", "BLUETOOTH")
 
 
+def is_parallel_port(name: str) -> bool:
+    """True for an LPT-style port, which is a raw byte pipe, not a serial port."""
+    return name.upper().startswith("LPT")
+
+
+def open_raw_port(name: str):
+    """Open an LPT port as a raw byte stream.
+
+    Its own function so the write path has a seam a test can replace — opening a
+    real printer port is not something a test suite can do.
+    """
+    return open(rf"\\.\{name}", "wb", buffering=0)
+
+
+def available_ports() -> list:
+    """Every port the printer could be on: COM (USB or Bluetooth) plus LPT.
+
+    Both are offered because the AQ20 has been seen presenting as each: a
+    virtual COM port over USB or Bluetooth on some machines, and LPT1 on others
+    depending on which driver Windows binds.
+    """
+    return find_all_serial_ports() + find_parallel_ports()
+
+
 class TsplSerialOptions(BaseModel):
     """Per-machine settings for the serial AQ20. Opaque to the UI."""
 
     port: str = ""
     # A USB CDC virtual COM port ignores the line rate, but a Bluetooth SPP
-    # bridge may not, and pyserial requires some value.
+    # bridge may not, and pyserial requires some value. Unused entirely on an
+    # LPT port, which has no line rate.
     baudrate: int = 115200
     label_width_mm: float = float(QR_LABEL_SIZE_MM)
     label_height_mm: float = float(QR_LABEL_SIZE_MM)
@@ -208,7 +242,7 @@ class PuquAq20SerialBackend:
 
     def __init__(self, options: Mapping[str, Any] | None = None) -> None:
         self._opts = TsplSerialOptions()
-        self._availability = Availability(False, "no COM port chosen")
+        self._availability = Availability(False, "no printer port chosen")
         # In-flight bookkeeping. Serial writes run on a daemon thread so a wedged
         # port can never keep the process alive, and only one may be outstanding
         # at a time — see _run_bounded().
@@ -244,9 +278,9 @@ class PuquAq20SerialBackend:
         delay) on the UI thread every time the list is drawn.
         """
         if not self._opts.port:
-            self._availability = Availability(False, "no COM port chosen")
+            self._availability = Availability(False, "no printer port chosen")
             return self._availability
-        present = any(p.port == self._opts.port for p in find_all_serial_ports())
+        present = any(p.port == self._opts.port for p in available_ports())
         if not present:
             self._availability = Availability(
                 False, f"{self._opts.port} not connected"
@@ -332,6 +366,23 @@ class PuquAq20SerialBackend:
         this job must NOT go on to print — otherwise a label bearing one device's
         serial falls out while the operator is holding the next device.
         """
+        if is_parallel_port(opts.port):
+            # Windows presents some USB label printers as LPT rather than as a
+            # virtual COM port. pyserial cannot open one at all, so the bytes go
+            # straight to the DOS device. There is no baud rate and no flow
+            # control on this path — it is a raw byte pipe, which is all TSPL
+            # needs. The bounded worker above is what stops a wedged printer
+            # port hanging the tool, since this open() has no timeout either.
+            with open_raw_port(opts.port) as port:
+                if self._is_abandoned(generation):
+                    log.warning(
+                        "discarding label job for %s: the operator was already "
+                        "told it failed", opts.port,
+                    )
+                    return
+                port.write(payload)
+            return
+
         with serial.Serial(
             port=opts.port,
             baudrate=opts.baudrate,
@@ -424,7 +475,7 @@ class PuquAq20SerialBackend:
                 PrintStatus.UNAVAILABLE,
                 "PuQu AQ20 unavailable",
                 f"{self._availability.detail}. Open Printer Setup and choose the "
-                f"COM port the printer is connected on.",
+                f"port the printer is connected on.",
             )
 
         plan = plan_label(self._metrics())
@@ -499,7 +550,7 @@ class _TsplSerialSetupDialog(QDialog):
         self._refresh_btn = QPushButton("Refresh")
         self._refresh_btn.clicked.connect(self._reload_ports)
         port_row.addWidget(self._refresh_btn)
-        form.addRow("COM Port:", port_row)
+        form.addRow("Printer Port:", port_row)
 
         self._baud = QSpinBox()
         self._baud.setRange(1200, 1000000)
@@ -543,9 +594,11 @@ class _TsplSerialSetupDialog(QDialog):
         layout.addLayout(form)
 
         note = QLabel(
-            "The label size describes the stock you loaded — the tool cannot read "
-            "it from the printer. A printer paired over Bluetooth also appears "
-            "here as a COM port."
+            "The port list shows COM ports (USB or Bluetooth) and LPT ports — "
+            "Windows binds this printer to one or the other depending on the "
+            "machine. Baud rate is ignored on an LPT port. The label size "
+            "describes the stock you loaded; the tool cannot read it from the "
+            "printer."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #666; font-size: 11px;")
@@ -558,12 +611,21 @@ class _TsplSerialSetupDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self._port.currentIndexChanged.connect(self._sync_baud_enabled)
         self._reload_ports()
+
+    def _sync_baud_enabled(self) -> None:
+        """An LPT port is a raw byte pipe — it has no line rate to set."""
+        serial_port = not is_parallel_port(self.selected_port())
+        self._baud.setEnabled(serial_port)
+        self._baud.setToolTip(
+            "" if serial_port else "Not used on an LPT port"
+        )
 
     def _reload_ports(self) -> None:
         """Repopulate the port list, keeping the current selection if present."""
         current = self.selected_port() or self._opts.port
-        ports = find_all_serial_ports()
+        ports = available_ports()
 
         def likely(p) -> bool:
             haystack = f"{p.port} {p.description}".upper()
@@ -592,6 +654,7 @@ class _TsplSerialSetupDialog(QDialog):
                     self._port.setCurrentIndex(0)
         finally:
             self._port.blockSignals(blocked)
+        self._sync_baud_enabled()
 
     def selected_port(self) -> str:
         data = self._port.currentData()
