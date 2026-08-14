@@ -201,7 +201,7 @@ These are all things that have actually gone wrong, verified on Windows with PyQ
 | `system` | System printer (any) | Windows driver, native print dialog | The default. Unchanged legacy behaviour. Also the fallback for an unknown id. |
 | `puqu_aq20` | PUQU AQ20 | Windows driver, pinned queue | Needs PUQU's Windows driver installed. 203 dpi, 20 × 20 mm forced. See §3. |
 | `puqu_aq20_serial` | PuQu AQ20 (USB Serial) | COM **or LPT** port, raw **TSPL** | Same printer, no driver needed. Covers USB, Bluetooth and LPT. See §4. |
-| `zpl_tcp` | ZPL printer (network) | Raw TCP:9100, `^GFA` raster | Replaces the tool's old dead ZPL module. |
+| `zpl_tcp` | ZPL printer (network) | Raw TCP:9100, `^GFA` raster | Replaces the tool's old dead ZPL module. Supports centre-tracked printers — see §5. |
 
 The two AQ20 entries are alternatives, not duplicates: `puqu_aq20` goes through the Windows print
 driver, `puqu_aq20_serial` talks to the printer directly. Use whichever the line has set up.
@@ -403,3 +403,65 @@ One label is sent as, in order: `SIZE`, `GAP`, `DIRECTION 0,0`, `REFERENCE 0,0`,
 command is sent on every job rather than assumed: `DIRECTION`'s second argument is a mirror flag the
 printer remembers across power cycles, and a mirrored QR is unscannable with nothing in the tool able
 to detect it. `BITMAP` takes its width in **bytes** and its height in **dots**.
+
+
+---
+
+## 5. Centre-tracked ZPL printers (Zebra ZD410 / ZD411 and relatives)
+
+Desktop label printers with spring-loaded media guides **self-centre the roll** under a printhead much
+wider than a 20 mm label. Zebra's own patent US10163044 states it: *"Most desktop clam shell printers
+and mobile printers are center-tracked."* The ZD410 User Guide confirms the mechanism — the guides are
+pulled open and released onto the roll, so they close symmetrically.
+
+**Why this matters:** ZPL dot 0 is the left edge of the **printhead**, not of the label. A 20 mm label
+on a 56 mm head sits at roughly dots 144–304. Printing at `^FO0,0` puts a geometrically perfect QR
+entirely on bare liner. **Neither the media guard nor the undersize guard can detect this** — both only
+compare numbers the configuration supplied, and every one of them is correct.
+
+### Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `head_width_mm` | `0` | Printhead width. `0` = edge-justified, no offset (existing behaviour). Zebra ZD410/ZD411: **56 mm at 203 dpi, 54 mm at 300 dpi**. |
+| `gap_media` | `true` | Sends `^MNY` to force gap/web sensing. Without it, a printer that last ran continuous stock treats a roll of die-cut labels as one long strip. |
+| `max_length_dots` | `0` | Sends `^ML` to cap how far the printer hunts for a gap. `0` leaves the printer's own default, which on a ZD410 is **39 inches** of stock. Use `406` at 203 dpi or `600` at 300 dpi for a 2-inch cap. |
+
+With `head_width_mm` set, the offset is **derived**, not hardcoded: `(head_dots − label_dots) / 2`.
+`^PW` is also raised to the full head width, because `^PW` clips from the left edge of the head — left
+at the label width it would clip the offset image away entirely.
+
+```yaml
+label_printer:
+  backends:
+    zpl_tcp:
+      host: "192.168.1.50"
+      dpi: 203
+      head_width_mm: 56.0     # ZD410/ZD411 at 203 dpi; 54.0 at 300 dpi
+      max_length_dots: 406    # 2 inches instead of 39
+```
+
+### Zebra ZD410 notes
+
+- **Media spec fits with room to spare:** minimum media width **15 mm**, minimum label length
+  **6.35 mm** tear-off (User Guide P1130712-01EN p.165). A 20 mm label on a 25–30 mm liner is
+  comfortably inside both.
+- **Ethernet is NOT standard.** The base unit is USB + USB Host; Ethernet is a field-installable module
+  in the connectivity slot. Our backend is TCP-only, so check the part number: `ZD41022-D01E00EZ` has
+  Ethernet, `...D01000EZ` does not. The retrofit kit is `P1080383-442`.
+- **300 dpi is factory-only**, not field upgradable. The 6th digit selects it: `ZD41022` = 203 dpi,
+  `ZD41023` = 300 dpi.
+- **Move the gap sensor to centre.** Its default position is deliberately off-centre (it matches legacy
+  LP/TLP models). On narrow centred stock the default can sit off the label entirely.
+- **Turn off feed-on-head-close** (`^MFN,N`, committed with `^JUS`). The default feeds to the next web
+  on every cover close, which with 20 mm labels ejects several.
+- **Discontinued** — end of sale 2022, Zebra support ended 30 December 2025, firmware frozen at
+  V84.20.23Z. One consequence: `^LL` is ignored on gap media on this firmware, so the printer always
+  uses its own calibrated label length.
+
+### Needs bench verification
+
+The offset arithmetic assumes the media centreline coincides with the printhead centreline. **Zebra
+publishes no figure for this**, and the spec sheet explicitly defers: *"Zebra recommends always
+qualifying any application with prior testing."* Print one label, measure where the QR lands, and
+adjust `head_width_mm` if it is off — a 1 mm error moves the QR by 8 dots at 203 dpi.

@@ -76,6 +76,17 @@ class ZplOptions(BaseModel):
     label_width_mm: float = float(QR_LABEL_SIZE_MM)
     label_height_mm: float = float(QR_LABEL_SIZE_MM)
     margins_mm: float = 0.0
+    # Printhead width for a CENTRE-TRACKED printer, 0 for an edge-justified one.
+    # Desktop printers with spring-loaded media guides centre the roll under a
+    # head much wider than the label, which moves where ZPL dot 0 falls — see
+    # media_offset_dots(). Zebra ZD410/ZD411: 56 mm at 203 dpi, 54 mm at 300 dpi.
+    # Left at 0 so existing installations are unaffected.
+    head_width_mm: float = 0.0
+    # Send ^MNY to force gap/web sensing instead of trusting auto-detect.
+    gap_media: bool = True
+    # ^ML cap on how far the printer hunts for a gap before giving up. 0 leaves
+    # the printer's own default, which on a ZD410 is 39 inches of stock.
+    max_length_dots: int = 0
 
     @field_validator("port")
     @classmethod
@@ -113,6 +124,23 @@ class ZplOptions(BaseModel):
     def _valid_label_size(cls, value: float) -> float:
         if not 5.0 <= value <= 200.0:
             raise ValueError("label dimensions must be between 5 and 200 mm")
+        return value
+
+    @field_validator("head_width_mm")
+    @classmethod
+    def _valid_head_width(cls, value: float) -> float:
+        # 0 = edge-justified printer, no offset. Otherwise a plausible printhead.
+        if value and not 20.0 <= value <= 220.0:
+            raise ValueError("head_width_mm must be 0, or between 20 and 220")
+        return value
+
+    @field_validator("max_length_dots")
+    @classmethod
+    def _valid_max_length(cls, value: int) -> int:
+        # ZPL requires ^ML to be at least the real label length; the programming
+        # guide's floor is two inches' worth of dots.
+        if value and not 100 <= value <= 32000:
+            raise ValueError("max_length_dots must be 0, or between 100 and 32000")
         return value
 
 
@@ -296,6 +324,42 @@ class ZplSocketBackend:
             provenance="declared",
         )
 
+    def head_width_dots(self) -> int:
+        """Printhead width in dots, or 0 when the printer is edge-justified.
+
+        Nonzero means the printer is **centre-tracked**: the media is centred
+        under a printhead wider than the label, so ZPL dot 0 is the left edge of
+        the *head*, not of the label. See :meth:`media_offset_dots`.
+        """
+        if not self._opts.head_width_mm:
+            return 0
+        return round(self._opts.head_width_mm / 25.4 * self._opts.dpi)
+
+    def media_offset_dots(self) -> int:
+        """Dots from ZPL x=0 to the left edge of a centred label.
+
+        Desktop label printers with spring-loaded media guides — the Zebra ZD410
+        and its ZD400/ZD600 relatives among them — self-centre the roll under a
+        printhead much wider than our 20 mm label. Zebra's own patent US10163044
+        puts it plainly: "Most desktop clam shell printers and mobile printers
+        are center-tracked."
+
+        Without this offset a 20 mm label on a 56 mm head gets its QR printed at
+        dots 0-160 while the label sits at roughly 144-304 — the job is
+        geometrically perfect and lands entirely on bare liner. Neither the media
+        guard nor the undersize guard can see that, because both only ever
+        compare numbers the configuration supplied.
+
+        Zebra publishes no figure for this, so it is derived from the head width
+        rather than hardcoded, and it still wants one measured test print before
+        anyone trusts it.
+        """
+        head = self.head_width_dots()
+        if head <= 0:
+            return 0
+        label = round(self._opts.label_width_mm / 25.4 * self._opts.dpi)
+        return max(0, (head - label) // 2)
+
     def _preamble(self) -> str:
         """Explicit label state, so a printer's saved config can't rotate us.
 
@@ -307,10 +371,25 @@ class ZplSocketBackend:
         dpi = self._opts.dpi
         width_dots = round(self._opts.label_width_mm / 25.4 * dpi)
         height_dots = round(self._opts.label_height_mm / 25.4 * dpi)
-        return (
-            f"^XA^LH0,0^LRN^PON^FWN^CI28"
-            f"^PW{width_dots}^LL{height_dots}"
-        )
+
+        # ^PW clips everything to its right, measured from the left edge of the
+        # printhead. On a centre-tracked printer the label sits past that point,
+        # so ^PW must be the FULL head width or the offset image is clipped away
+        # entirely.
+        print_width = self.head_width_dots() or width_dots
+
+        parts = [f"^XA^LH0,0^LRN^PON^FWN^CI28^PW{print_width}^LL{height_dots}"]
+        if self._opts.gap_media:
+            # Force web/gap sensing rather than trusting auto-detect. Without it
+            # a printer that last ran continuous stock treats a roll of small
+            # die-cut labels as one long strip.
+            parts.append("^MNY")
+        if self._opts.max_length_dots:
+            # The Zebra default is 39 inches (ZD410 User Guide p.170). If gap
+            # detection fails, that is how much 20 mm stock it feeds before
+            # giving up.
+            parts.append(f"^ML{self._opts.max_length_dots}")
+        return "".join(parts)
 
     def build_zpl(self, image: QImage, plan) -> str:
         """Full ZPL job for one label."""
@@ -318,9 +397,10 @@ class ZplSocketBackend:
         mono = qt_geometry.rasterize(image, side)
         data, total, per_row, rows = pack_gfa(mono)
         x, y, _, _ = plan.qr_rect
+        x_dots = max(0, round(x)) + self.media_offset_dots()
         return (
             f"{self._preamble()}"
-            f"^FO{max(0, round(x))},{max(0, round(y))}"
+            f"^FO{x_dots},{max(0, round(y))}"
             f"^GFA,{total},{total},{per_row},{data}^FS"
             f"^XZ"
         )

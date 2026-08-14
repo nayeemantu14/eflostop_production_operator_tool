@@ -45,6 +45,10 @@ label_printer:
     zpl_tcp:
       host: ""
       port: 9100
+      # Centre-tracked printers (Zebra ZD410/ZD411 and most desktop clamshells)
+      # centre the roll under a wider printhead, which moves where ZPL dot 0
+      # falls. 0 = edge-justified. ZD410: 56.0 at 203 dpi, 54.0 at 300 dpi.
+      head_width_mm: 0.0
 
 test:
   boot_log_timeout_seconds: 15
